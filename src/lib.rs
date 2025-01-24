@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    num::{NonZeroU32, NonZeroUsize},
-};
+use std::{fs, num::NonZeroU32};
 
 use opencv::{
     calib3d::{self, rodrigues},
@@ -15,6 +12,7 @@ use opencv::{
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
+mod image;
 mod manual;
 
 type VectorOfMat = Vector<Mat>;
@@ -230,8 +228,7 @@ pub fn charuco() -> Result<(), DynError> {
                     if (0..image_size.width).contains(&(pixel_x_rounded as i32))
                         && (0..image_size.height).contains(&(pixel_y_rounded as i32))
                     {
-                        let new_world =
-                            transformer.transform_point(pixel_x_rounded as _, pixel_y_rounded as _);
+                        let new_world = lut.get(pixel_x_rounded as _, pixel_y_rounded as _);
                         println!("World coordinates: {:?}", new_world);
                     } else {
                         println!("Not within the image");
@@ -315,7 +312,7 @@ impl PixelToWorldLut {
     }
 
     #[inline(always)]
-    pub unsafe fn get(&self, x: u32, y: u32) -> (f32, f32) {
+    pub fn get(&self, x: u32, y: u32) -> (f32, f32) {
         let width = self.width.get();
         let height = self.height.get();
 

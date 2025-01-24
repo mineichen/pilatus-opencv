@@ -7,8 +7,6 @@ use opencv::{
 };
 use pilatus_engineering::image::LumaImage;
 
-mod image;
-
 pub fn show_image() -> Result<(), Box<dyn std::error::Error>> {
     let mut all_image_points: Vector<Mat> = Vector::new();
     let mut all_world_points: Vector<Mat> = Vector::new();
@@ -19,7 +17,7 @@ pub fn show_image() -> Result<(), Box<dyn std::error::Error>> {
         2.try_into().unwrap(),
     );
 
-    let cv_image: image::BorrowImage = (&image).try_into()?;
+    let cv_image: crate::image::BorrowImage = (&image).try_into()?;
     imgcodecs::imwrite(
         &super::target_dir("square.png"),
         cv_image.deref(),
