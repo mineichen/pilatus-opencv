@@ -104,6 +104,14 @@ pub fn charuco() -> Result<(), DynError> {
     let mut rvecs = VectorOfMat::new();
     let mut tvecs = VectorOfMat::new();
 
+    let flags = calib3d::CALIB_FIX_K2
+        | calib3d::CALIB_FIX_K3
+        | calib3d::CALIB_FIX_K4
+        | calib3d::CALIB_FIX_K5
+        | calib3d::CALIB_FIX_K6
+        | calib3d::CALIB_ZERO_TANGENT_DIST
+        | calib3d::CALIB_USE_LU;
+
     let error = calib3d::calibrate_camera(
         &all_object_points,
         &all_image_points,
@@ -112,7 +120,7 @@ pub fn charuco() -> Result<(), DynError> {
         &mut dist_coeffs,
         &mut rvecs,
         &mut tvecs,
-        calib3d::CALIB_FIX_K3 | calib3d::CALIB_ZERO_TANGENT_DIST | calib3d::CALIB_USE_LU,
+        flags,
         core::TermCriteria::default()?,
     )?;
     println!("Calibration error: {}", error);
@@ -183,9 +191,10 @@ pub fn charuco() -> Result<(), DynError> {
                 &map2,
                 imgproc::INTER_LINEAR,
                 core::BORDER_CONSTANT,
-                core::Scalar::default(),
+                core::Scalar::all(0.0),
             )?;
-            let transformer = PixelToWorldTransformer::new(&camera_matrix, &rvec, &tvec)?;
+            let transformer =
+                PixelToWorldTransformer::new(&camera_matrix, &rvec, &tvec, &dist_coeffs)?;
             let time = std::time::Instant::now();
             let lut = PixelToWorldLut::new(
                 &transformer,
@@ -331,10 +340,11 @@ pub struct PixelToWorldTransformer {
     rot_mat_inv: [[f64; 3]; 3],
     tvec_inv: [f64; 3],
     cam_matrix_inv: [[f64; 3]; 3],
+    kappa: f64,
 }
 
 impl PixelToWorldTransformer {
-    fn new(camera_matrix: &Mat, rvec: &Mat, tvec: &Mat) -> opencv::Result<Self> {
+    fn new(camera_matrix: &Mat, rvec: &Mat, tvec: &Mat, dist_coeffs: &Mat) -> opencv::Result<Self> {
         // Validate matrix sizes at initialization
         if camera_matrix.rows() != 3 || camera_matrix.cols() != 3 {
             return Err(opencv::Error::new(
@@ -414,11 +424,21 @@ impl PixelToWorldTransformer {
                     *cam_matrix_inv.at_2d::<f64>(row as i32, col as i32)?;
             }
         }
+        let kappa = if dist_coeffs.rows() >= 1 && dist_coeffs.cols() >= 1 {
+            for idx in 1..(dist_coeffs.cols() * dist_coeffs.rows()) {
+                assert_eq!(0., *dist_coeffs.at::<f64>(idx).unwrap());
+            }
+            0.0
+            //-*dist_coeffs.at::<f64>(0)?
+        } else {
+            0.0
+        };
 
         Ok(Self {
             rot_mat_inv,
             tvec_inv,
             cam_matrix_inv: cam_matrix_inv_arr,
+            kappa,
         })
     }
 
@@ -427,8 +447,7 @@ impl PixelToWorldTransformer {
         let x = x as f64;
         let y = y as f64;
 
-        // Undistort (division model approximation)
-        let k = 0.0; // Your κ parameter
+        let k = self.kappa; // Your κ parameter
         let r2 = x * x + y * y;
         let scale = 1.0 / (1.0 + k * r2);
         let xu = x * scale;
@@ -472,75 +491,3 @@ mod tests {
         charuco().unwrap();
     }
 }
-
-//  // Step 1: Precompute reusable parts
-//  let mut rot_mat = Mat::default();
-//  rodrigues(rvec, &mut rot_mat, &mut Mat::default())?;
-//  let rot_mat_inv = rot_mat.t()?.to_mat()?;
-
-//  let mut tvec_inv = Mat::default();
-//  opencv::core::gemm(
-//      &rot_mat_inv,
-//      tvec,
-//      -1.0,
-//      &Mat::default(),
-//      0.0,
-//      &mut tvec_inv,
-//      0,
-//  )?;
-
-//  let camera_matrix_inv = camera_matrix.inv_def()?;
-
-//  // Step 2: Generate all pixel coordinates in homogeneous form
-//  let mut pixel_coords: Mat = Mat::zeros(
-//      image_width.get() as i32 * image_height.get() as i32,
-//      3,
-//      CV_64F,
-//  )?
-//  .to_mat()?;
-//  for x in 0..image_width.get() {
-//      for y in 0..image_height.get() {
-//          let idx = x as i32 * image_width.get() as i32 + y as i32;
-//          *pixel_coords.at_2d_mut::<f64>(idx, 0)? = x as f64;
-//          *pixel_coords.at_2d_mut::<f64>(idx, 1)? = y as f64;
-//          *pixel_coords.at_2d_mut::<f64>(idx, 2)? = 1.0;
-//      }
-//  }
-
-//  // Step 3: Compute ray_camera for all pixels in one batch
-//  let mut ray_camera = Mat::default();
-//  opencv::core::gemm(
-//      &camera_matrix_inv,
-//      &pixel_coords,
-//      1.0,
-//      &Mat::default(),
-//      0.0,
-//      &mut ray_camera,
-//      0,
-//  )?;
-
-//  // Step 4: Compute ray_world for all pixels in one batch
-//  let mut ray_world = Mat::default();
-//  opencv::core::gemm(
-//      &rot_mat_inv,
-//      &ray_camera,
-//      1.0,
-//      &Mat::default(),
-//      0.0,
-//      &mut ray_world,
-//      0,
-//  )?;
-
-//  // Step 5: Compute world coordinates in parallel
-//  (0..ray_world.rows())
-//      .into_par_iter()
-//      .map(|i| {
-//          let scale = -tvec_inv.at::<f64>(2)? / ray_world.at_2d::<f64>(i, 2)?;
-//          let x =
-//              (tvec_inv.at::<f64>(0)? + ray_world.at_2d::<f64>(i, 0)? * scale) as f32;
-//          let y =
-//              (tvec_inv.at::<f64>(1)? + ray_world.at_2d::<f64>(i, 1)? * scale) as f32;
-
-//          opencv::Result::Ok((x.round() as u16, y.round() as u16))
-//      })
-//      .collect::<opencv::Result<_>>()?
