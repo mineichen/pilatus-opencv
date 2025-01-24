@@ -6,5 +6,6 @@ edition = "2021"
 [dependencies]
 opencv = { version= "0.94.1", features = ["clang-runtime"] }
 pilatus-engineering = { git = "https://github.com/mineichen/pilatus.git", branch = "main", features = ["image"] }
+rayon = "1.10.0"
 thiserror = "2"
 #itertools = "0.13"
