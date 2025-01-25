@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use minfac::{Registered, ServiceCollection};
+use opencv::core::Vector;
 use pilatus::device::HandlerResult;
 use pilatus::{
     device::{ActorSystem, DeviceContext, DeviceResult, DeviceValidationContext},
@@ -8,12 +9,14 @@ use pilatus::{
     UpdateParamsMessage, UpdateParamsMessageError,
 };
 use pilatus::{FileService, FileServiceBuilder, RelativeDirectoryPath, RelativeFilePath};
+use pilatus_axum::ServiceCollectionExtensions;
 use serde::{Deserialize, Serialize};
 
 use pilatus_opencv::calibration::{
     CalibrationError, CalibrationResult, IntrinsicCalibration, PixelToWorldLut,
 };
 
+mod calibration_detail;
 mod projector;
 
 pub const DEVICE_TYPE: &str = "opencv-calibration";
@@ -21,16 +24,20 @@ pub const DEVICE_TYPE: &str = "opencv-calibration";
 pub(super) fn register_services(c: &mut ServiceCollection) {
     c.with::<(Registered<ActorSystem>, Registered<FileServiceBuilder>)>()
         .register_device(DEVICE_TYPE, validator, device);
+
+    c.register_web("opencv/calibration", |x| {
+        x.http("/", |r| r.get(calibration_detail::web_handler))
+    });
 }
 
 pub struct Artifacts {
-    calibration_details: Option<Vec<u8>>,
+    calibration_details: Option<Vector<u8>>,
     lut: tokio::sync::watch::Sender<CalibrationResult<PixelToWorldLut>>,
     _keep_sender_open: tokio::sync::watch::Receiver<CalibrationResult<PixelToWorldLut>>,
 }
 
 impl Artifacts {
-    fn new(r: CalibrationResult<(Vec<u8>, PixelToWorldLut)>) -> Self {
+    fn new(r: CalibrationResult<(Vector<u8>, PixelToWorldLut)>) -> Self {
         let (calibration_details, lut) = Self::split_raw(r);
         let (lut, _keep_sender_open) = tokio::sync::watch::channel(lut);
         Self {
@@ -40,14 +47,14 @@ impl Artifacts {
         }
     }
 
-    fn update(&mut self, r: CalibrationResult<(Vec<u8>, PixelToWorldLut)>) {
+    fn update(&mut self, r: CalibrationResult<(Vector<u8>, PixelToWorldLut)>) {
         let (calibration_details, lut) = Self::split_raw(r);
         self.calibration_details = calibration_details;
         self.lut.send(lut).expect("State keeps the channel open");
     }
     fn split_raw(
-        r: CalibrationResult<(Vec<u8>, PixelToWorldLut)>,
-    ) -> (Option<Vec<u8>>, CalibrationResult<PixelToWorldLut>) {
+        r: CalibrationResult<(Vector<u8>, PixelToWorldLut)>,
+    ) -> (Option<Vector<u8>>, CalibrationResult<PixelToWorldLut>) {
         let mut calibration_details = None;
         let initial_projector = r.map(|(details, x)| {
             calibration_details = Some(details);
@@ -80,6 +87,7 @@ async fn device(
         .register(id)
         .add_handler(DeviceState::update_params)
         .add_handler(DeviceState::stream_projector)
+        .add_handler(DeviceState::get_calibration_details)
         .execute(DeviceState {
             file_service,
             actor_system: actor_system.clone(),
@@ -115,7 +123,7 @@ impl Params {
     async fn calculate_lut(
         &self,
         files: &FileService<()>,
-    ) -> CalibrationResult<(Vec<u8>, PixelToWorldLut)> {
+    ) -> CalibrationResult<(Vector<u8>, PixelToWorldLut)> {
         let intrinsics = files
             .list_files(intrinsic_path())
             .await
@@ -143,7 +151,10 @@ impl Params {
             let lut = extrinsic_calib.build_world_to_pixel()?;
             extrinsic_calib.draw_debug_points(&mut extrinsic_base_mat, &lut)?;
 
-            Ok((Vec::new(), lut))
+            let mut output = Vector::new();
+            opencv::imgcodecs::imencode(".png", &extrinsic_base_mat, &mut output, &Vector::new())?;
+
+            Ok((output, lut))
         })
         .await
         .map_err(|_| CalibrationError::NotInitialized)?

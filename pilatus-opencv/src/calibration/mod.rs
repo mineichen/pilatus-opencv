@@ -6,7 +6,7 @@ use opencv::{
     core::{self, Mat, MatTraitConst, Point, Point2f, Point3f, Size_, Vector},
     imgproc,
 };
-use pilatus::device::ActorMessage;
+use pilatus::device::{ActorError, ActorMessage};
 
 mod intrinsic;
 mod pixel_to_world;
@@ -35,6 +35,25 @@ pub struct StreamProjectorMessage;
 impl ActorMessage for StreamProjectorMessage {
     type Output = BoxStream<'static, CalibrationResult<PixelToWorldLut>>;
     type Error = std::convert::Infallible;
+}
+
+#[non_exhaustive]
+#[derive(Default)]
+pub struct CalibrationDetailMessage {}
+
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error("There was not successful calibration to be evaluated")]
+pub struct NoCalibrationDetailsError;
+
+impl From<NoCalibrationDetailsError> for ActorError<NoCalibrationDetailsError> {
+    fn from(value: NoCalibrationDetailsError) -> Self {
+        ActorError::Custom(value)
+    }
+}
+
+impl ActorMessage for CalibrationDetailMessage {
+    type Output = Vec<u8>;
+    type Error = NoCalibrationDetailsError;
 }
 
 pub struct ExtrinsicCalibration {
@@ -245,13 +264,13 @@ mod tests {
             let extrinsic = intrinsic.clone().calibrate_extrinsic(&distorted)?;
             let world_transformer = extrinsic.build_world_to_pixel()?;
             for (label, mut image) in [("distorded", distorted), ("undistorted", undistorted)] {
-                let path = target_dir
-                    .join(format!("{stem}_{label}.png"))
-                    .to_string_lossy()
-                    .to_string();
+                let path = target_dir.join(format!("{stem}_{label}.png"));
 
                 extrinsic.draw_debug_points(&mut image, &world_transformer)?;
-                opencv::imgcodecs::imwrite(&path, &image, &Vector::new())?;
+                let mut output = Vector::new();
+                opencv::imgcodecs::imencode(".png", &image, &mut output, &Vector::new())?;
+                std::fs::write(path, &output).unwrap();
+                //opencv::imgcodecs::imwrite(&path, &image, &Vector::new())?;
             }
         }
         Ok(())
