@@ -1,18 +1,38 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
+use minfac::ServiceCollection;
 use opencv::{
     calib3d::{self},
     core::{self, Mat, MatTraitConst, Point2f, Point3f, Size_, Vector},
     imgproc,
 };
 
+mod device;
 mod intrinsic;
 mod pixel_to_world;
 
 pub use intrinsic::*;
 pub use pixel_to_world::*;
 
-pub enum CalibrationError {}
+type CalibrationResult<T> = Result<T, CalibrationError>;
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum CalibrationError {
+    #[error("Not initialized")]
+    NotInitialized,
+    #[error("{0:?}")]
+    Other(Arc<opencv::Error>),
+}
+
+impl From<opencv::Error> for CalibrationError {
+    fn from(value: opencv::Error) -> Self {
+        CalibrationError::Other(Arc::new(value))
+    }
+}
+
+pub(super) fn register_services(c: &mut ServiceCollection) {
+    device::register_services(c);
+}
 
 pub struct ExtrinsicCalibration {
     intrinsic: IntrinsicCalibration,
@@ -26,7 +46,7 @@ pub struct ImageIterable {
 }
 
 impl ImageIterable {
-    pub fn create_image_iterator(path: impl AsRef<Path>) -> Self {
+    pub fn from_dir(path: impl AsRef<Path>) -> Self {
         let mut paths: Vec<_> = std::fs::read_dir(path)
             .into_iter()
             .flatten()
@@ -159,7 +179,7 @@ mod tests {
 
     #[test]
     fn run_charuco() -> opencv::Result<()> {
-        let iter = ImageIterable::create_image_iterator("charuco_raw_images");
+        let iter = ImageIterable::from_dir("charuco_raw_images");
         let intrinsic = IntrinsicCalibration::create(iter.iter_images().map(|(_, i)| i))?;
         for (path, distorted) in iter.iter_images() {
             let stem = Path::new(path)

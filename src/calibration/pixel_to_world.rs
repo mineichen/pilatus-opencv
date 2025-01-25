@@ -7,7 +7,7 @@ use opencv::{
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PixelToWorldLut {
     width: NonZeroU32,
     height: NonZeroU32,
