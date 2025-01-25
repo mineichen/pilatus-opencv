@@ -13,6 +13,7 @@ mod pixel_to_world;
 
 pub use intrinsic::*;
 pub use pixel_to_world::*;
+use tracing::trace;
 
 pub type CalibrationResult<T> = Result<T, CalibrationError>;
 
@@ -132,7 +133,7 @@ impl ExtrinsicCalibration {
                 .try_into()
                 .expect("Images are always higher 0"),
         );
-        println!("Lut generation took {:?}", time.elapsed());
+        trace!("Lut generation took {:?}", time.elapsed());
         Ok(lut)
     }
 
@@ -199,7 +200,7 @@ impl ExtrinsicCalibration {
                 let projected_points = self.project_points(&points_world)?;
                 let coord = projected_points.at::<Point2f>(0)?;
 
-                println!("Pixel position for {points_world:?}: {:?}", coord);
+                trace!("Pixel position for {points_world:?}: {:?}", coord);
                 let pixel_x_rounded = coord.x.round();
                 let pixel_y_rounded = coord.y.round();
                 let new_accurate = transformer.transform_point(coord.x, coord.y);
@@ -207,9 +208,9 @@ impl ExtrinsicCalibration {
                     && (0..self.image_size.height).contains(&(pixel_y_rounded as i32))
                 {
                     let new_lut = lut.get(pixel_x_rounded as _, pixel_y_rounded as _);
-                    println!("World coordinates: (accurate: {new_accurate:?}, lut: {new_lut:?})");
+                    trace!("World coordinates: (accurate: {new_accurate:?}, lut: {new_lut:?})");
                 } else {
-                    println!("Not within the image (accurate: {new_accurate:?})");
+                    trace!("Not within the image (accurate: {new_accurate:?})");
                 }
 
                 Ok((Point2f::new(x, y), Point2f::new(coord.x, coord.y)))

@@ -9,6 +9,7 @@ use opencv::{
     },
     prelude::{CharucoDetectorTraitConst, *},
 };
+use tracing::{debug, trace};
 
 use super::{ExtrinsicCalibration, Undistorter};
 
@@ -141,9 +142,9 @@ impl IntrinsicCalibration {
             flags,
             core::TermCriteria::default()?,
         )?;
-        println!("Calibration error: {}", error);
-        println!("Camera matrix:\n{:?}", camera_matrix);
-        println!("Distortion coefficients:\n{:?}", dist_coeffs);
+        debug!("Calibration error: {}", error);
+        trace!("Camera matrix:\n{:?}", camera_matrix);
+        trace!("Distortion coefficients:\n{:?}", dist_coeffs);
 
         // Tested 22.01. Improved quality
         let camera_matrix = calib3d::get_optimal_new_camera_matrix_def(

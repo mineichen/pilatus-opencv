@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use pilatus_opencv::calibration::{
     CalibrationError, CalibrationResult, IntrinsicCalibration, PixelToWorldLut,
 };
+use tracing::warn;
 
 mod calibration_detail;
 mod projector;
@@ -82,6 +83,9 @@ async fn device(
     let id = ctx.id;
     let file_service = file_service_builder.build(id);
     let r = params.calculate_lut(&file_service).await;
+    if let Err(e) = r.as_ref() {
+        warn!("Failing calibration during startup: {e}")
+    }
 
     actor_system
         .register(id)
