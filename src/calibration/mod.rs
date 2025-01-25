@@ -1,11 +1,8 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::Path, sync::Arc};
 
 use opencv::{
     calib3d::{self},
-    core::{self, Mat, Point, Point2d, Point2f, Point3f, Size_, Vector},
+    core::{self, Mat, Point2f, Point3f, Size_, Vector},
     imgproc,
     objdetect::{
         get_predefined_dictionary, CharucoBoard, CharucoDetector, PredefinedDictionaryType,
@@ -18,15 +15,6 @@ mod pixel_to_world;
 pub use pixel_to_world::*;
 
 type VectorOfMat = Vector<Mat>;
-type DynError = Box<dyn std::error::Error>;
-
-fn target_dir(filename: impl AsRef<str>) -> String {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join(filename.as_ref())
-        .to_string_lossy()
-        .to_string()
-}
 
 pub enum CalibrationError {}
 
@@ -51,7 +39,8 @@ pub struct ImageIterable {
 impl ImageIterable {
     pub fn create_image_iterator(path: impl AsRef<Path>) -> Self {
         let mut paths: Vec<_> = std::fs::read_dir(path)
-            .unwrap()
+            .into_iter()
+            .flatten()
             .filter_map(|entry| {
                 let entry = entry.ok()?;
                 let path = entry.path();
@@ -341,6 +330,8 @@ impl ExtrinsicCalibration {
 
 #[cfg(test)]
 mod tests {
+    use opencv::core::Point;
+
     use super::*;
 
     #[test]
@@ -351,8 +342,8 @@ mod tests {
             let stem = Path::new(path)
                 .file_stem()
                 .and_then(|s| s.to_str())
-                .unwrap();
-            let distorted = distorted.unwrap();
+                .expect("Works as it is created from string above");
+            let distorted = distorted?;
             let undistorter = intrinsic.create_undistorter(distorted.size()?)?;
             let undistorted = undistorter.undistort(&distorted)?;
             let extrinsic = intrinsic.clone().calibrate_extrinsic(&distorted)?;
@@ -399,7 +390,11 @@ mod tests {
                 )?;
 
                 opencv::imgcodecs::imwrite(
-                    &target_dir(format!("{stem}_{label}.png")),
+                    &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("target")
+                        .join(format!("{stem}_{label}.png"))
+                        .to_string_lossy()
+                        .to_string(),
                     &image,
                     &Vector::new(),
                 )?;
