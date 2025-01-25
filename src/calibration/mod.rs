@@ -1,14 +1,16 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use opencv::{
     calib3d::{self},
-    core::{self, Mat, Point, Point2f, Point3f, Vector},
+    core::{self, Mat, Point, Point2d, Point2f, Point3f, Size_, Vector},
     imgproc,
     objdetect::{
         get_predefined_dictionary, CharucoBoard, CharucoDetector, PredefinedDictionaryType,
     },
-    prelude::CharucoDetectorTraitConst,
-    prelude::*,
+    prelude::{CharucoDetectorTraitConst, *},
 };
 
 mod pixel_to_world;
@@ -28,35 +30,96 @@ fn target_dir(filename: impl AsRef<str>) -> String {
 
 pub enum CalibrationError {}
 
+#[derive(Clone)]
 pub struct IntrinsicCalibration {
-    images: Vec<(String, Mat)>,
-    detector: CharucoDetector,
+    detector: Arc<CharucoDetector>,
     camera_matrix: Mat,
     dist_coeffs: Mat,
 }
 
-pub struct ExtrinsicCalibration {}
+pub struct ExtrinsicCalibration {
+    intrinsic: IntrinsicCalibration,
+    rvec: Mat,
+    tvec: Mat,
+    image_size: Size_<i32>,
+}
 
-impl IntrinsicCalibration {
-    pub fn from_dir(path: impl AsRef<Path>) -> Result<IntrinsicCalibration, DynError> {
+pub struct ImageIterable {
+    paths: Vec<String>,
+}
+
+impl ImageIterable {
+    pub fn create_image_iterator(path: impl AsRef<Path>) -> Self {
         let mut paths: Vec<_> = std::fs::read_dir(path)
             .unwrap()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .map(|ext| ext == "jpg" || ext == "jpeg" || ext == "png")
-                    .unwrap_or(false)
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let path = entry.path();
+                let ext = path.extension()?;
+                if ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "tiff" {
+                    Some(path.to_str()?.to_owned())
+                } else {
+                    None
+                }
             })
-            .map(|entry| entry.path())
             .collect();
         paths.sort_unstable();
-        Self::create(paths).map_err(Into::into)
+        Self { paths }
+    }
+
+    fn iter_images(&self) -> impl Iterator<Item = (&'_ str, opencv::Result<Mat>)> {
+        self.paths.iter().map(|p| {
+            (
+                p.as_str(),
+                opencv::imgcodecs::imread(p, opencv::imgcodecs::IMREAD_COLOR),
+            )
+        })
+    }
+}
+
+pub struct Undistorter {
+    map1: Mat,
+    map2: Mat,
+}
+
+impl Undistorter {
+    fn undistort(&self, distorted: &Mat) -> opencv::Result<Mat> {
+        let mut undistorted = Mat::default();
+        // Remap the image
+        imgproc::remap(
+            distorted,
+            &mut undistorted,
+            &self.map1,
+            &self.map2,
+            imgproc::INTER_LINEAR,
+            core::BORDER_CONSTANT,
+            core::Scalar::all(0.0),
+        )?;
+        Ok(undistorted)
+    }
+}
+
+impl IntrinsicCalibration {
+    pub fn create_undistorter(&self, image_size: core::Size_<i32>) -> opencv::Result<Undistorter> {
+        let mut map1 = Mat::default();
+        let mut map2 = Mat::default();
+
+        // Initialize undistortion maps
+        calib3d::init_undistort_rectify_map(
+            &self.camera_matrix,
+            &self.dist_coeffs,
+            &Mat::default(),
+            &self.camera_matrix, // Use same camera matrix for simplicity
+            image_size,
+            core::CV_32FC1,
+            &mut map1,
+            &mut map2,
+        )?;
+        Ok(Undistorter { map1, map2 })
     }
 
     pub fn create(
-        images: impl IntoIterator<Item = PathBuf>,
+        images: impl IntoIterator<Item = opencv::Result<Mat>>,
     ) -> Result<IntrinsicCalibration, opencv::Error> {
         // Directory containing calibration images
 
@@ -81,11 +144,8 @@ impl IntrinsicCalibration {
         // Process each image
         let images = images
             .into_iter()
-            .map(|path| {
-                let img = opencv::imgcodecs::imread(
-                    path.to_str().unwrap(),
-                    opencv::imgcodecs::IMREAD_COLOR,
-                )?;
+            .map(|img| {
+                let img = img?;
 
                 let mut gray = Mat::default();
                 opencv::imgproc::cvt_color(
@@ -115,11 +175,11 @@ impl IntrinsicCalibration {
                     all_image_points.push(image_points);
                 }
 
-                opencv::Result::Ok((path.file_stem().unwrap().to_string_lossy().to_string(), img))
+                opencv::Result::Ok(img)
             })
             .collect::<opencv::Result<Vec<_>>>()?;
 
-        let image_size = images[0].1.size()?;
+        let image_size = images[0].size()?;
         let mut camera_matrix = Mat::default();
         let mut dist_coeffs = Mat::default();
         let mut rvecs = VectorOfMat::new();
@@ -157,168 +217,123 @@ impl IntrinsicCalibration {
         )?;
 
         Ok(Self {
-            detector,
-            images,
+            detector: Arc::new(detector),
             camera_matrix,
             dist_coeffs,
         })
     }
 
-    pub fn calibrate_extrinsic(&mut self) -> Result<ExtrinsicCalibration, opencv::Error> {
-        for (img_filename_stem, distorted) in self.images.iter_mut() {
-            let image_size = distorted.size()?;
-            let mut corners = Mat::default();
-            let mut ids = Mat::default();
-            // Detect markers using ArucoDetector
-            self.detector
-                .detect_board_def(distorted, &mut corners, &mut ids)?;
-            if !ids.empty() {
-                let mut object_points = Mat::default();
-                let mut image_points = Mat::default();
-                self.detector.get_board()?.match_image_points(
-                    &corners,
-                    &ids,
-                    &mut object_points,
-                    &mut image_points,
-                )?;
-
-                // Estimate pose using solvePnP
-                let mut rvec = Mat::default();
-                let mut tvec = Mat::default();
-
-                calib3d::solve_pnp(
-                    &object_points,
-                    &image_points,
-                    &self.camera_matrix,
-                    &self.dist_coeffs,
-                    &mut rvec,
-                    &mut tvec,
-                    false,
-                    calib3d::SOLVEPNP_ITERATIVE,
-                )?;
-
-                //     let mut undistorted = Mat::default();
-                //     calib3d::undistort_def(&last, &mut undistorted, &camera_matrix, &dist_coeffs)?;
-                //    let mut last = undistorted;
-
-                let mut undistorted = Mat::default();
-                let mut map1 = Mat::default();
-                let mut map2 = Mat::default();
-
-                // Initialize undistortion maps
-                calib3d::init_undistort_rectify_map(
-                    &self.camera_matrix,
-                    &self.dist_coeffs,
-                    &Mat::default(),
-                    &self.camera_matrix, // Use same camera matrix for simplicity
-                    image_size,
-                    core::CV_32FC1,
-                    &mut map1,
-                    &mut map2,
-                )?;
-
-                // Remap the image
-                imgproc::remap(
-                    distorted,
-                    &mut undistorted,
-                    &map1,
-                    &map2,
-                    imgproc::INTER_LINEAR,
-                    core::BORDER_CONSTANT,
-                    core::Scalar::all(0.0),
-                )?;
-                let transformer = PixelToWorldTransformer::new(
-                    &self.camera_matrix,
-                    &rvec,
-                    &tvec,
-                    &self.dist_coeffs,
-                )?;
-                let time = std::time::Instant::now();
-                let lut = PixelToWorldLut::new(
-                    &transformer,
-                    (image_size.width as u32)
-                        .try_into()
-                        .expect("Images are always wider 0"),
-                    (image_size.height as u32)
-                        .try_into()
-                        .expect("Images are always higher 0"),
-                );
-                println!("Lut generation took {:?}", time.elapsed());
-                let coords = (-1..7)
-                    .flat_map(|x| (-1..9).map(move |y| (x as f32 * 29., y as f32 * 29.)))
-                    .map(|(x, y)| {
-                        let point = Vector::from_slice(&[Point3f::new(x, y, 0.0)]);
-                        let mut projected_points = Mat::default();
-
-                        calib3d::project_points_def(
-                            &point,
-                            &rvec,
-                            &tvec,
-                            &self.camera_matrix,
-                            &self.dist_coeffs,
-                            &mut projected_points,
-                        )?;
-
-                        let coord = projected_points.at::<Point2f>(0)?;
-
-                        println!("Pixel position for {point:?}: {:?}", coord);
-                        let pixel_x_rounded = coord.x.round();
-                        let pixel_y_rounded = coord.y.round();
-
-                        if (0..image_size.width).contains(&(pixel_x_rounded as i32))
-                            && (0..image_size.height).contains(&(pixel_y_rounded as i32))
-                        {
-                            let new_world = lut.get(pixel_x_rounded as _, pixel_y_rounded as _);
-                            println!("World coordinates: {:?}", new_world);
-                        } else {
-                            println!("Not within the image");
-                        }
-
-                        Result::<_, opencv::Error>::Ok(Point::new(coord.x as i32, coord.y as i32))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                for (label, mut image) in
-                    [("distorded", distorted), ("undistorted", &mut undistorted)]
-                {
-                    let thickness = 2;
-                    for pixel in coords.iter() {
-                        imgproc::circle(
-                            &mut image,
-                            *pixel,
-                            10,
-                            core::Scalar::new(255.0, 0.0, 0.0, 1.0),
-                            thickness,
-                            imgproc::LINE_8,
-                            0,
-                        )?;
-                        imgproc::circle(
-                            &mut image,
-                            *pixel,
-                            12,
-                            core::Scalar::new(0.0, 255.0, 0., 1.0),
-                            thickness,
-                            imgproc::LINE_8,
-                            0,
-                        )?;
-                    }
-                    imgproc::circle(
-                        &mut image,
-                        *coords.get(0).unwrap(),
-                        14,
-                        core::Scalar::new(0.0, 0.0, 255.0, 1.0),
-                        thickness,
-                        imgproc::LINE_8,
-                        0,
-                    )?;
-                    opencv::imgcodecs::imwrite(
-                        &target_dir(format!("{img_filename_stem}_{label}.png")),
-                        image,
-                        &Vector::new(),
-                    )?;
-                }
-            }
+    pub fn calibrate_extrinsic(
+        self,
+        distorted: &Mat,
+    ) -> Result<ExtrinsicCalibration, opencv::Error> {
+        let image_size = distorted.size()?;
+        let mut corners = Mat::default();
+        let mut ids = Mat::default();
+        // Detect markers using ArucoDetector
+        self.detector
+            .detect_board_def(distorted, &mut corners, &mut ids)?;
+        if ids.empty() {
+            return Err(opencv::Error::new(
+                core::StsObjectNotFound,
+                "Nothing detected",
+            ));
         }
-        Ok(ExtrinsicCalibration {})
+        let mut object_points = Mat::default();
+        let mut image_points = Mat::default();
+        self.detector.get_board()?.match_image_points(
+            &corners,
+            &ids,
+            &mut object_points,
+            &mut image_points,
+        )?;
+
+        // Estimate pose using solvePnP
+        let mut rvec = Mat::default();
+        let mut tvec = Mat::default();
+
+        calib3d::solve_pnp(
+            &object_points,
+            &image_points,
+            &self.camera_matrix,
+            &self.dist_coeffs,
+            &mut rvec,
+            &mut tvec,
+            false,
+            calib3d::SOLVEPNP_ITERATIVE,
+        )?;
+
+        Ok(ExtrinsicCalibration {
+            intrinsic: self,
+            rvec,
+            tvec,
+            image_size,
+        })
+    }
+}
+
+impl ExtrinsicCalibration {
+    fn build_world_to_pixel(&self) -> opencv::Result<PixelToWorldLut> {
+        let transformer = PixelToWorldTransformer::new(
+            &self.intrinsic.camera_matrix,
+            &self.rvec,
+            &self.tvec,
+            &self.intrinsic.dist_coeffs,
+        )?;
+        let time = std::time::Instant::now();
+        let lut = PixelToWorldLut::new(
+            &transformer,
+            (self.image_size.width as u32)
+                .try_into()
+                .expect("Images are always wider 0"),
+            (self.image_size.height as u32)
+                .try_into()
+                .expect("Images are always higher 0"),
+        );
+        println!("Lut generation took {:?}", time.elapsed());
+        Ok(lut)
+    }
+
+    fn debug_points<'a>(
+        &'a self,
+        lut: &'a PixelToWorldLut,
+    ) -> impl Iterator<Item = opencv::Result<(Point2f, Point2f)>> + 'a {
+        let iter = (-1..7).flat_map(|x| (-1..9).map(move |y| (x as f32 * 29., y as f32 * 29.)));
+        iter.clone().map(|(x, y)| {
+            let point_world = Point3f::new(x, y, 0.0);
+            let points_world = Vector::from_slice(&[point_world]);
+            let projected_points = self.project_points(&points_world)?;
+            let coord = projected_points.at::<Point2f>(0)?;
+
+            println!("Pixel position for {points_world:?}: {:?}", coord);
+            let pixel_x_rounded = coord.x.round();
+            let pixel_y_rounded = coord.y.round();
+
+            if (0..self.image_size.width).contains(&(pixel_x_rounded as i32))
+                && (0..self.image_size.height).contains(&(pixel_y_rounded as i32))
+            {
+                let new_world = lut.get(pixel_x_rounded as _, pixel_y_rounded as _);
+                println!("World coordinates: {:?}", new_world);
+            } else {
+                println!("Not within the image");
+            }
+
+            Ok((Point2f::new(x, y), Point2f::new(coord.x, coord.y)))
+        })
+    }
+    fn project_points(&self, points_world: &Vector<Point3f>) -> opencv::Result<Mat> {
+        let mut projected_points = Mat::default();
+
+        calib3d::project_points_def(
+            &points_world,
+            &self.rvec,
+            &self.tvec,
+            &self.intrinsic.camera_matrix,
+            &self.intrinsic.dist_coeffs,
+            &mut projected_points,
+        )?;
+
+        Ok(projected_points)
     }
 }
 
@@ -329,8 +344,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn run_charuco() {
-        let mut intrinsic = IntrinsicCalibration::from_dir("charuco_raw_images").unwrap();
-        intrinsic.calibrate_extrinsic().unwrap();
+    fn run_charuco() -> opencv::Result<()> {
+        let iter = ImageIterable::create_image_iterator("charuco_raw_images");
+        let intrinsic = IntrinsicCalibration::create(iter.iter_images().map(|(_, i)| i))?;
+        for (path, distorted) in iter.iter_images() {
+            let stem = Path::new(path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap();
+            let distorted = distorted.unwrap();
+            let undistorter = intrinsic.create_undistorter(distorted.size()?)?;
+            let undistorted = undistorter.undistort(&distorted)?;
+            let extrinsic = intrinsic.clone().calibrate_extrinsic(&distorted)?;
+            let world_transformer = extrinsic.build_world_to_pixel()?;
+            let points = extrinsic
+                .debug_points(&world_transformer)
+                .collect::<opencv::Result<Vec<_>>>()?;
+
+            for (label, mut image) in [("distorded", distorted), ("undistorted", undistorted)] {
+                let thickness = 2;
+                for (_, pixel) in points.iter() {
+                    let pixel_quantisized = Point::new(pixel.x.round() as _, pixel.y.round() as _);
+                    imgproc::circle(
+                        &mut image,
+                        pixel_quantisized,
+                        10,
+                        core::Scalar::new(255.0, 0.0, 0.0, 1.0),
+                        thickness,
+                        imgproc::LINE_8,
+                        0,
+                    )?;
+                    imgproc::circle(
+                        &mut image,
+                        pixel_quantisized,
+                        12,
+                        core::Scalar::new(0.0, 255.0, 0., 1.0),
+                        thickness,
+                        imgproc::LINE_8,
+                        0,
+                    )?;
+                }
+                let zero =
+                    extrinsic.project_points(&Vector::from_elem(Point3f::new(0., 0., 0.), 1))?;
+                let zero = zero.at::<Point2f>(0)?;
+
+                imgproc::circle(
+                    &mut image,
+                    Point::new(zero.x.round() as _, zero.y.round() as _),
+                    14,
+                    core::Scalar::new(0.0, 0.0, 255.0, 1.0),
+                    thickness,
+                    imgproc::LINE_8,
+                    0,
+                )?;
+
+                opencv::imgcodecs::imwrite(
+                    &target_dir(format!("{stem}_{label}.png")),
+                    &image,
+                    &Vector::new(),
+                )?;
+            }
+        }
+        Ok(())
     }
 }
