@@ -2,13 +2,15 @@ use std::path::PathBuf;
 
 use minfac::{Registered, ServiceCollection};
 use opencv::core::Vector;
-use pilatus::device::HandlerResult;
+use pilatus::device::{DeviceId, HandlerResult};
 use pilatus::{
     device::{ActorSystem, DeviceContext, DeviceResult, DeviceValidationContext},
     prelude::*,
     UpdateParamsMessage, UpdateParamsMessageError,
 };
-use pilatus::{FileService, FileServiceBuilder, RelativeDirectoryPath, RelativeFilePath};
+use pilatus::{
+    FileService, FileServiceBuilder, RelativeDirectoryPath, RelativeFilePath, SubscribeParams,
+};
 use pilatus_axum::ServiceCollectionExtensions;
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +22,7 @@ use tracing::warn;
 mod calibration_detail;
 mod projector;
 
-pub const DEVICE_TYPE: &str = "opencv-calibration";
+pub const DEVICE_TYPE: &str = "opencv-calibration-depth-slice";
 
 pub(super) fn register_services(c: &mut ServiceCollection) {
     c.with::<(Registered<ActorSystem>, Registered<FileServiceBuilder>)>()
@@ -117,10 +119,13 @@ fn intrinsic_path() -> &'static RelativeDirectoryPath {
     RelativeDirectoryPath::new("intrinsic").unwrap()
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
-#[serde(deny_unknown_fields, default)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Params {
+    #[serde(default)]
     extrinsic_base: Option<RelativeFilePath>,
+    #[serde(flatten)]
+    subscribe_params: SubscribeParams,
 }
 
 impl Params {
@@ -165,6 +170,13 @@ impl Params {
     }
 }
 
-pub fn create_default_device_config() -> pilatus::DeviceConfig {
-    pilatus::DeviceConfig::new_unchecked(DEVICE_TYPE, DEVICE_TYPE, Params::default())
+pub fn create_default_device_config(predecessor: DeviceId) -> pilatus::DeviceConfig {
+    pilatus::DeviceConfig::new_unchecked(
+        DEVICE_TYPE,
+        DEVICE_TYPE,
+        Params {
+            subscribe_params: SubscribeParams::with_provider(predecessor),
+            extrinsic_base: None,
+        },
+    )
 }
