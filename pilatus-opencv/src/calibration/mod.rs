@@ -1,20 +1,18 @@
 use std::{path::Path, sync::Arc};
 
-use minfac::ServiceCollection;
 use opencv::{
     calib3d::{self},
     core::{self, Mat, MatTraitConst, Point2f, Point3f, Size_, Vector},
     imgproc,
 };
 
-mod device;
 mod intrinsic;
 mod pixel_to_world;
 
 pub use intrinsic::*;
 pub use pixel_to_world::*;
 
-type CalibrationResult<T> = Result<T, CalibrationError>;
+pub type CalibrationResult<T> = Result<T, CalibrationError>;
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CalibrationError {
@@ -28,10 +26,6 @@ impl From<opencv::Error> for CalibrationError {
     fn from(value: opencv::Error) -> Self {
         CalibrationError::Other(Arc::new(value))
     }
-}
-
-pub(super) fn register_services(c: &mut ServiceCollection) {
-    device::register_services(c);
 }
 
 pub struct ExtrinsicCalibration {
@@ -98,7 +92,7 @@ impl Undistorter {
 }
 
 impl ExtrinsicCalibration {
-    fn build_world_to_pixel(&self) -> opencv::Result<PixelToWorldLut> {
+    pub fn build_world_to_pixel(&self) -> opencv::Result<PixelToWorldLut> {
         let transformer = PixelToWorldTransformer::new(
             self.camera_matrix(),
             &self.rvec,

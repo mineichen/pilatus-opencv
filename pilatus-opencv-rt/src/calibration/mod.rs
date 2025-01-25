@@ -10,7 +10,9 @@ use pilatus::{
 use pilatus::{FileService, FileServiceBuilder, RelativeDirectoryPath, RelativeFilePath};
 use serde::{Deserialize, Serialize};
 
-use super::{CalibrationError, CalibrationResult};
+use pilatus_opencv::calibration::{
+    CalibrationError, CalibrationResult, IntrinsicCalibration, PixelToWorldLut,
+};
 
 mod projector;
 
@@ -24,7 +26,7 @@ pub(super) fn register_services(c: &mut ServiceCollection) {
 struct DeviceState {
     file_service: FileService<()>,
     actor_system: ActorSystem,
-    projector: tokio::sync::watch::Sender<CalibrationResult<super::PixelToWorldLut>>,
+    projector: tokio::sync::watch::Sender<CalibrationResult<PixelToWorldLut>>,
 }
 
 async fn validator(ctx: DeviceValidationContext<'_>) -> Result<Params, UpdateParamsMessageError> {
@@ -72,10 +74,7 @@ pub struct Params {
 }
 
 impl Params {
-    async fn calculate_lut(
-        &self,
-        files: &FileService<()>,
-    ) -> CalibrationResult<super::PixelToWorldLut> {
+    async fn calculate_lut(&self, files: &FileService<()>) -> CalibrationResult<PixelToWorldLut> {
         let intrinsics = files
             .list_files(create_relative_path())
             .await
@@ -98,7 +97,7 @@ impl Params {
                 .ok_or_else(|| CalibrationError::NotInitialized)??;
 
             let intrinsic_calib =
-                super::IntrinsicCalibration::create(intrinsics.iter().filter_map(load_mat))?;
+                IntrinsicCalibration::create(intrinsics.iter().filter_map(load_mat))?;
             let extrinsic_calib = intrinsic_calib.calibrate_extrinsic(&extrinsic_base_mat)?;
             Ok(extrinsic_calib.build_world_to_pixel()?)
         })
