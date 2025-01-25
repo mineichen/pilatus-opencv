@@ -16,17 +16,51 @@ use pilatus_opencv::calibration::{
 
 mod projector;
 
-pub const DEVICE_TYPE: &str = "engineering-emulation-camera";
+pub const DEVICE_TYPE: &str = "opencv-calibration";
 
 pub(super) fn register_services(c: &mut ServiceCollection) {
     c.with::<(Registered<ActorSystem>, Registered<FileServiceBuilder>)>()
         .register_device(DEVICE_TYPE, validator, device);
 }
 
+pub struct Artifacts {
+    calibration_details: Option<Vec<u8>>,
+    lut: tokio::sync::watch::Sender<CalibrationResult<PixelToWorldLut>>,
+    _keep_sender_open: tokio::sync::watch::Receiver<CalibrationResult<PixelToWorldLut>>,
+}
+
+impl Artifacts {
+    fn new(r: CalibrationResult<(Vec<u8>, PixelToWorldLut)>) -> Self {
+        let (calibration_details, lut) = Self::split_raw(r);
+        let (lut, _keep_sender_open) = tokio::sync::watch::channel(lut);
+        Self {
+            calibration_details,
+            lut,
+            _keep_sender_open,
+        }
+    }
+
+    fn update(&mut self, r: CalibrationResult<(Vec<u8>, PixelToWorldLut)>) {
+        let (calibration_details, lut) = Self::split_raw(r);
+        self.calibration_details = calibration_details;
+        self.lut.send(lut).expect("State keeps the channel open");
+    }
+    fn split_raw(
+        r: CalibrationResult<(Vec<u8>, PixelToWorldLut)>,
+    ) -> (Option<Vec<u8>>, CalibrationResult<PixelToWorldLut>) {
+        let mut calibration_details = None;
+        let initial_projector = r.map(|(details, x)| {
+            calibration_details = Some(details);
+            x
+        });
+        (calibration_details, initial_projector)
+    }
+}
+
 struct DeviceState {
     file_service: FileService<()>,
     actor_system: ActorSystem,
-    projector: tokio::sync::watch::Sender<CalibrationResult<PixelToWorldLut>>,
+    artifacts: Artifacts,
 }
 
 async fn validator(ctx: DeviceValidationContext<'_>) -> Result<Params, UpdateParamsMessageError> {
@@ -40,14 +74,16 @@ async fn device(
 ) -> DeviceResult {
     let id = ctx.id;
     let file_service = file_service_builder.build(id);
-    let initial_projector = params.calculate_lut(&file_service).await;
+    let r = params.calculate_lut(&file_service).await;
+
     actor_system
         .register(id)
         .add_handler(DeviceState::update_params)
+        .add_handler(DeviceState::stream_projector)
         .execute(DeviceState {
             file_service,
             actor_system: actor_system.clone(),
-            projector: tokio::sync::watch::channel(initial_projector).0,
+            artifacts: Artifacts::new(r),
         })
         .await;
 
@@ -59,11 +95,13 @@ impl DeviceState {
         &mut self,
         UpdateParamsMessage { params }: UpdateParamsMessage<Params>,
     ) -> impl HandlerResult<UpdateParamsMessage<Params>> {
+        self.artifacts
+            .update(params.calculate_lut(&self.file_service).await);
         Ok(())
     }
 }
 
-fn create_relative_path() -> &'static RelativeDirectoryPath {
+fn intrinsic_path() -> &'static RelativeDirectoryPath {
     RelativeDirectoryPath::new("intrinsic").unwrap()
 }
 
@@ -74,9 +112,12 @@ pub struct Params {
 }
 
 impl Params {
-    async fn calculate_lut(&self, files: &FileService<()>) -> CalibrationResult<PixelToWorldLut> {
+    async fn calculate_lut(
+        &self,
+        files: &FileService<()>,
+    ) -> CalibrationResult<(Vec<u8>, PixelToWorldLut)> {
         let intrinsics = files
-            .list_files(create_relative_path())
+            .list_files(intrinsic_path())
             .await
             .map_err(|_| CalibrationError::NotInitialized)?
             .into_iter()
@@ -91,7 +132,7 @@ impl Params {
                     opencv::imgcodecs::IMREAD_COLOR,
                 ))
             };
-            let extrinsic_base_mat = extrinsic_base
+            let mut extrinsic_base_mat = extrinsic_base
                 .as_ref()
                 .and_then(load_mat)
                 .ok_or_else(|| CalibrationError::NotInitialized)??;
@@ -99,7 +140,10 @@ impl Params {
             let intrinsic_calib =
                 IntrinsicCalibration::create(intrinsics.iter().filter_map(load_mat))?;
             let extrinsic_calib = intrinsic_calib.calibrate_extrinsic(&extrinsic_base_mat)?;
-            Ok(extrinsic_calib.build_world_to_pixel()?)
+            let lut = extrinsic_calib.build_world_to_pixel()?;
+            extrinsic_calib.draw_debug_points(&mut extrinsic_base_mat, &lut)?;
+
+            Ok((Vec::new(), lut))
         })
         .await
         .map_err(|_| CalibrationError::NotInitialized)?

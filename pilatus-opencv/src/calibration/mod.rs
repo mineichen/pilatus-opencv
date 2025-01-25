@@ -1,10 +1,12 @@
 use std::{path::Path, sync::Arc};
 
+use futures::stream::BoxStream;
 use opencv::{
     calib3d::{self},
-    core::{self, Mat, MatTraitConst, Point2f, Point3f, Size_, Vector},
+    core::{self, Mat, MatTraitConst, Point, Point2f, Point3f, Size_, Vector},
     imgproc,
 };
+use pilatus::device::ActorMessage;
 
 mod intrinsic;
 mod pixel_to_world;
@@ -26,6 +28,13 @@ impl From<opencv::Error> for CalibrationError {
     fn from(value: opencv::Error) -> Self {
         CalibrationError::Other(Arc::new(value))
     }
+}
+
+pub struct StreamProjectorMessage;
+
+impl ActorMessage for StreamProjectorMessage {
+    type Output = BoxStream<'static, CalibrationResult<PixelToWorldLut>>;
+    type Error = std::convert::Infallible;
 }
 
 pub struct ExtrinsicCalibration {
@@ -93,12 +102,7 @@ impl Undistorter {
 
 impl ExtrinsicCalibration {
     pub fn build_world_to_pixel(&self) -> opencv::Result<PixelToWorldLut> {
-        let transformer = PixelToWorldTransformer::new(
-            self.camera_matrix(),
-            &self.rvec,
-            &self.tvec,
-            &self.dist_coeffs(),
-        )?;
+        let transformer = self.pixel_to_world_transformer()?;
         let time = std::time::Instant::now();
         let lut = PixelToWorldLut::new(
             &transformer,
@@ -113,32 +117,85 @@ impl ExtrinsicCalibration {
         Ok(lut)
     }
 
+    pub fn pixel_to_world_transformer(&self) -> opencv::Result<PixelToWorldTransformer> {
+        PixelToWorldTransformer::new(
+            self.camera_matrix(),
+            &self.rvec,
+            &self.tvec,
+            &self.dist_coeffs(),
+        )
+    }
+
+    pub fn draw_debug_points(
+        &self,
+        image: &mut Mat,
+        transformer: &PixelToWorldLut,
+    ) -> opencv::Result<()> {
+        let thickness = 2;
+        for (_, pixel) in self.debug_points(transformer)? {
+            let pixel_quantisized = Point::new(pixel.x.round() as _, pixel.y.round() as _);
+            imgproc::circle(
+                image,
+                pixel_quantisized,
+                10,
+                core::Scalar::new(255.0, 0.0, 0.0, 1.0),
+                thickness,
+                imgproc::LINE_8,
+                0,
+            )?;
+            imgproc::circle(
+                image,
+                pixel_quantisized,
+                12,
+                core::Scalar::new(0.0, 255.0, 0., 1.0),
+                thickness,
+                imgproc::LINE_8,
+                0,
+            )?;
+        }
+        let zero = self.project_points(&Vector::from_elem(Point3f::new(0., 0., 0.), 1))?;
+        let zero = zero.at::<Point2f>(0)?;
+
+        imgproc::circle(
+            image,
+            Point::new(zero.x.round() as _, zero.y.round() as _),
+            14,
+            core::Scalar::new(0.0, 0.0, 255.0, 1.0),
+            thickness,
+            imgproc::LINE_8,
+            0,
+        )
+    }
+
     fn debug_points<'a>(
         &'a self,
         lut: &'a PixelToWorldLut,
-    ) -> impl Iterator<Item = opencv::Result<(Point2f, Point2f)>> + 'a {
-        let iter = (-1..7).flat_map(|x| (-1..9).map(move |y| (x as f32 * 29., y as f32 * 29.)));
-        iter.clone().map(|(x, y)| {
-            let point_world = Point3f::new(x, y, 0.0);
-            let points_world = Vector::from_slice(&[point_world]);
-            let projected_points = self.project_points(&points_world)?;
-            let coord = projected_points.at::<Point2f>(0)?;
+    ) -> opencv::Result<Vec<(Point2f, Point2f)>> {
+        let transformer = &self.pixel_to_world_transformer()?;
+        (-1..7)
+            .flat_map(|x| (-1..9).map(move |y| (x as f32 * 29., y as f32 * 29.)))
+            .map(|(x, y)| {
+                let point_world = Point3f::new(x, y, 0.0);
+                let points_world = Vector::from_slice(&[point_world]);
+                let projected_points = self.project_points(&points_world)?;
+                let coord = projected_points.at::<Point2f>(0)?;
 
-            println!("Pixel position for {points_world:?}: {:?}", coord);
-            let pixel_x_rounded = coord.x.round();
-            let pixel_y_rounded = coord.y.round();
+                println!("Pixel position for {points_world:?}: {:?}", coord);
+                let pixel_x_rounded = coord.x.round();
+                let pixel_y_rounded = coord.y.round();
+                let new_accurate = transformer.transform_point(coord.x, coord.y);
+                if (0..self.image_size.width).contains(&(pixel_x_rounded as i32))
+                    && (0..self.image_size.height).contains(&(pixel_y_rounded as i32))
+                {
+                    let new_lut = lut.get(pixel_x_rounded as _, pixel_y_rounded as _);
+                    println!("World coordinates: (accurate: {new_accurate:?}, lut: {new_lut:?})");
+                } else {
+                    println!("Not within the image (accurate: {new_accurate:?})");
+                }
 
-            if (0..self.image_size.width).contains(&(pixel_x_rounded as i32))
-                && (0..self.image_size.height).contains(&(pixel_y_rounded as i32))
-            {
-                let new_world = lut.get(pixel_x_rounded as _, pixel_y_rounded as _);
-                println!("World coordinates: {:?}", new_world);
-            } else {
-                println!("Not within the image");
-            }
-
-            Ok((Point2f::new(x, y), Point2f::new(coord.x, coord.y)))
-        })
+                Ok((Point2f::new(x, y), Point2f::new(coord.x, coord.y)))
+            })
+            .collect()
     }
     fn project_points(&self, points_world: &Vector<Point3f>) -> opencv::Result<Mat> {
         let mut projected_points = Mat::default();
@@ -167,14 +224,16 @@ impl ExtrinsicCalibration {
 
 #[cfg(test)]
 mod tests {
-    use opencv::core::Point;
-
     use super::*;
 
     #[test]
     fn run_charuco() -> opencv::Result<()> {
-        let iter = ImageIterable::from_dir("charuco_raw_images");
+        let iter = ImageIterable::from_dir("../charuco_raw_images");
         let intrinsic = IntrinsicCalibration::create(iter.iter_images().map(|(_, i)| i))?;
+        let target_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("target");
         for (path, distorted) in iter.iter_images() {
             let stem = Path::new(path)
                 .file_stem()
@@ -185,56 +244,14 @@ mod tests {
             let undistorted = undistorter.undistort(&distorted)?;
             let extrinsic = intrinsic.clone().calibrate_extrinsic(&distorted)?;
             let world_transformer = extrinsic.build_world_to_pixel()?;
-            let points = extrinsic
-                .debug_points(&world_transformer)
-                .collect::<opencv::Result<Vec<_>>>()?;
-
             for (label, mut image) in [("distorded", distorted), ("undistorted", undistorted)] {
-                let thickness = 2;
-                for (_, pixel) in points.iter() {
-                    let pixel_quantisized = Point::new(pixel.x.round() as _, pixel.y.round() as _);
-                    imgproc::circle(
-                        &mut image,
-                        pixel_quantisized,
-                        10,
-                        core::Scalar::new(255.0, 0.0, 0.0, 1.0),
-                        thickness,
-                        imgproc::LINE_8,
-                        0,
-                    )?;
-                    imgproc::circle(
-                        &mut image,
-                        pixel_quantisized,
-                        12,
-                        core::Scalar::new(0.0, 255.0, 0., 1.0),
-                        thickness,
-                        imgproc::LINE_8,
-                        0,
-                    )?;
-                }
-                let zero =
-                    extrinsic.project_points(&Vector::from_elem(Point3f::new(0., 0., 0.), 1))?;
-                let zero = zero.at::<Point2f>(0)?;
+                let path = target_dir
+                    .join(format!("{stem}_{label}.png"))
+                    .to_string_lossy()
+                    .to_string();
 
-                imgproc::circle(
-                    &mut image,
-                    Point::new(zero.x.round() as _, zero.y.round() as _),
-                    14,
-                    core::Scalar::new(0.0, 0.0, 255.0, 1.0),
-                    thickness,
-                    imgproc::LINE_8,
-                    0,
-                )?;
-
-                opencv::imgcodecs::imwrite(
-                    &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                        .join("target")
-                        .join(format!("{stem}_{label}.png"))
-                        .to_string_lossy()
-                        .to_string(),
-                    &image,
-                    &Vector::new(),
-                )?;
+                extrinsic.draw_debug_points(&mut image, &world_transformer)?;
+                opencv::imgcodecs::imwrite(&path, &image, &Vector::new())?;
             }
         }
         Ok(())

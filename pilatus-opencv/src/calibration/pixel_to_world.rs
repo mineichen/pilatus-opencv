@@ -7,6 +7,10 @@ use opencv::{
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
+trait PixelToWorld {
+    fn convert(x: f32, y: f32) -> (f32, f32);
+}
+
 #[derive(Debug, Clone)]
 pub struct PixelToWorldLut {
     width: NonZeroU32,
@@ -165,7 +169,7 @@ impl PixelToWorldTransformer {
     }
 
     #[inline]
-    fn transform_point(&self, x: f32, y: f32) -> (f32, f32) {
+    pub fn transform_point(&self, x: f32, y: f32) -> (f32, f32) {
         let x = x as f64;
         let y = y as f64;
 

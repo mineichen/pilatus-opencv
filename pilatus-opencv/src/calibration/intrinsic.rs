@@ -108,7 +108,15 @@ impl IntrinsicCalibration {
             })
             .collect::<opencv::Result<Vec<_>>>()?;
 
-        let image_size = images[0].size()?;
+        let image_size = images
+            .get(0)
+            .ok_or_else(|| {
+                opencv::Error::new(
+                    core::StsBadArg,
+                    "Require at least one input image to perform calibration",
+                )
+            })?
+            .size()?;
         let mut camera_matrix = Mat::default();
         let mut dist_coeffs = Mat::default();
         let mut rvecs = VectorOfMat::new();
