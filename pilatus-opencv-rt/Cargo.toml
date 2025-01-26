@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 futures = "0.3"
 minfac = { workspace = true }
-opencv = { version= "0.94.1", features = ["clang-runtime"] }
+opencv = { workspace = true }
 pilatus-axum = { git = "https://github.com/mineichen/pilatus.git", branch = "main" }
 pilatus = { git = "https://github.com/mineichen/pilatus.git", branch = "main", features = ["tokio"] }
 pilatus-engineering = { git = "https://github.com/mineichen/pilatus.git", branch = "main", features = ["image"] }

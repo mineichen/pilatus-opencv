@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 futures = "0.3"
-opencv = { version= "0.94.1", features = ["clang-runtime"] }
+opencv = { workspace = true }
 pilatus = { git = "https://github.com/mineichen/pilatus.git", branch = "main" }
 pilatus-engineering = { git = "https://github.com/mineichen/pilatus.git", branch = "main", features = ["image"] }
 rayon = "1.10.0"

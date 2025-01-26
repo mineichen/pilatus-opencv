@@ -15,6 +15,7 @@ image = { version = "0.25", default-features = false, features = [
   "png",
 ]}
 minfac = "0.1"
+opencv = { version= "0.94.1", default-features = false, features = ["clang-runtime", "calib3d", "imgcodecs", "imgproc", "objdetect"] }
 serde = "1"
 serde_json = "1"
 thiserror = "2"

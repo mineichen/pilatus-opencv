@@ -53,8 +53,8 @@ impl IntrinsicCalibration {
     ) -> Result<IntrinsicCalibration, opencv::Error> {
         // Directory containing calibration images
 
-        let square_size = 29.0; // mm
-        let marker_size = 14.0; // mm
+        let square_size = 40.0; // mm
+        let marker_size = 20.0; // mm
 
         // Create ChArUco board
 
