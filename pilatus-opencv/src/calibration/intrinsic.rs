@@ -22,7 +22,7 @@ pub struct IntrinsicCalibration {
     dist_coeffs: Mat,
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct IntrinsicCalibrationSettings {
     square_size_mm: f32,
     marker_size_mm: f32,
