@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use opencv::{
     calib3d::{self},
@@ -20,6 +20,21 @@ pub struct IntrinsicCalibration {
     detector: Arc<CharucoDetector>,
     camera_matrix: Mat,
     dist_coeffs: Mat,
+}
+
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct IntrinsicCalibrationSettings {
+    square_size_mm: f32,
+    marker_size_mm: f32,
+}
+
+impl Default for IntrinsicCalibrationSettings {
+    fn default() -> Self {
+        Self {
+            square_size_mm: 40.0,
+            marker_size_mm: 20.0,
+        }
+    }
 }
 
 impl IntrinsicCalibration {
@@ -44,25 +59,27 @@ impl IntrinsicCalibration {
         &self.camera_matrix
     }
 
+    pub fn board_square_length(&self) -> opencv::Result<f32> {
+        self.detector.get_board()?.get_square_length()
+    }
+
     pub fn dist_coeffs(&self) -> &Mat {
         &self.dist_coeffs
     }
 
     pub fn create(
         images: impl IntoIterator<Item = opencv::Result<Mat>>,
+        settings: IntrinsicCalibrationSettings,
     ) -> Result<IntrinsicCalibration, opencv::Error> {
         // Directory containing calibration images
-
-        let square_size = 40.0; // mm
-        let marker_size = 20.0; // mm
 
         // Create ChArUco board
 
         let dictionary = get_predefined_dictionary(PredefinedDictionaryType::DICT_5X5_1000)?;
         let board = CharucoBoard::new_def(
             opencv::core::Size::new(5, 7), // board dimensions
-            square_size,
-            marker_size, // marker size
+            settings.square_size_mm,
+            settings.marker_size_mm, // marker size
             &dictionary,
         )?;
         let detector = CharucoDetector::new_def(&board)?;

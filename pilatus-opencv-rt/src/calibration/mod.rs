@@ -154,8 +154,10 @@ impl Params {
                 .and_then(load_mat)
                 .ok_or_else(|| CalibrationError::NotInitialized)??;
 
-            let intrinsic_calib =
-                IntrinsicCalibration::create(intrinsics.iter().filter_map(load_mat))?;
+            let intrinsic_calib = IntrinsicCalibration::create(
+                intrinsics.iter().filter_map(load_mat),
+                Default::default(),
+            )?;
             let extrinsic_calib = intrinsic_calib.calibrate_extrinsic(&extrinsic_base_mat)?;
             let lut = extrinsic_calib.build_world_to_pixel()?;
             extrinsic_calib.draw_debug_points(&mut extrinsic_base_mat, &lut)?;

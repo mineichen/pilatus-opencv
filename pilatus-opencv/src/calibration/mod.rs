@@ -192,8 +192,9 @@ impl ExtrinsicCalibration {
         lut: &'a PixelToWorldLut,
     ) -> opencv::Result<Vec<(Point2f, Point2f)>> {
         let transformer = &self.pixel_to_world_transformer()?;
+        let square_len = self.intrinsic.board_square_length()?;
         (-1..7)
-            .flat_map(|x| (-1..9).map(move |y| (x as f32 * 29., y as f32 * 29.)))
+            .flat_map(|x| (-1..9).map(move |y| (x as f32 * square_len, y as f32 * square_len)))
             .map(|(x, y)| {
                 let point_world = Point3f::new(x, y, 0.0);
                 let points_world = Vector::from_slice(&[point_world]);
@@ -249,7 +250,8 @@ mod tests {
     #[test]
     fn run_charuco() -> opencv::Result<()> {
         let iter = ImageIterable::from_dir("../charuco_raw_images");
-        let intrinsic = IntrinsicCalibration::create(iter.iter_images().map(|(_, i)| i))?;
+        let intrinsic =
+            IntrinsicCalibration::create(iter.iter_images().map(|(_, i)| i), Default::default())?;
         let target_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
