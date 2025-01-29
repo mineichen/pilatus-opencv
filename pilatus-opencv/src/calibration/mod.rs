@@ -1,9 +1,9 @@
-use std::{path::Path, sync::Arc};
+use std::{num::NonZeroU32, path::Path, sync::Arc};
 
 use futures::stream::BoxStream;
 use opencv::{
     calib3d::{self},
-    core::{self, Mat, MatTraitConst, Point, Point2f, Point3f, Size_, Vector},
+    core::{self, Mat, MatTraitConst, Point, Point2f, Point3_, Point3f, Size_, Vector},
     imgproc,
 };
 use pilatus::device::{ActorError, ActorMessage};
@@ -16,11 +16,14 @@ pub use pixel_to_world::*;
 use tracing::trace;
 
 pub type CalibrationResult<T> = Result<T, CalibrationError>;
+const THICKNESS: i32 = 2;
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CalibrationError {
     #[error("Not initialized")]
     NotInitialized,
+    #[error("Not enough points found")]
+    NotEnoughPoints { image: Mat, points: Vec<Point2f> },
     #[error("{0:?}")]
     Other(Arc<opencv::Error>),
 }
@@ -55,13 +58,6 @@ impl From<NoCalibrationDetailsError> for ActorError<NoCalibrationDetailsError> {
 impl ActorMessage for CalibrationDetailMessage {
     type Output = Vec<u8>;
     type Error = NoCalibrationDetailsError;
-}
-
-pub struct ExtrinsicCalibration {
-    intrinsic: IntrinsicCalibration,
-    rvec: Mat,
-    tvec: Mat,
-    image_size: Size_<i32>,
 }
 
 pub struct ImageIterable {
@@ -119,20 +115,21 @@ impl Undistorter {
         Ok(undistorted)
     }
 }
-
+pub struct ExtrinsicCalibration {
+    intrinsic: IntrinsicCalibration,
+    rvec: Mat,
+    tvec: Mat,
+    image_size: Size_<NonZeroU32>,
+}
 impl ExtrinsicCalibration {
-    pub fn build_world_to_pixel(&self) -> opencv::Result<PixelToWorldLut> {
+    pub fn image_size(&self) -> Size_<NonZeroU32> {
+        self.image_size
+    }
+
+    pub fn build_pixel_to_world(&self) -> opencv::Result<PixelToWorldLut> {
         let transformer = self.pixel_to_world_transformer()?;
         let time = std::time::Instant::now();
-        let lut = PixelToWorldLut::new(
-            &transformer,
-            (self.image_size.width as u32)
-                .try_into()
-                .expect("Images are always wider 0"),
-            (self.image_size.height as u32)
-                .try_into()
-                .expect("Images are always higher 0"),
-        );
+        let lut = PixelToWorldLut::new(&transformer, self.image_size);
         trace!("Lut generation took {:?}", time.elapsed());
         Ok(lut)
     }
@@ -149,29 +146,10 @@ impl ExtrinsicCalibration {
     pub fn draw_debug_points(
         &self,
         image: &mut Mat,
-        transformer: &PixelToWorldLut,
+        transformer: &PixelToWorldTransformer,
     ) -> opencv::Result<()> {
-        let thickness = 2;
         for (_, pixel) in self.debug_points(transformer)? {
-            let pixel_quantisized = Point::new(pixel.x.round() as _, pixel.y.round() as _);
-            imgproc::circle(
-                image,
-                pixel_quantisized,
-                10,
-                core::Scalar::new(255.0, 0.0, 0.0, 1.0),
-                thickness,
-                imgproc::LINE_8,
-                0,
-            )?;
-            imgproc::circle(
-                image,
-                pixel_quantisized,
-                12,
-                core::Scalar::new(0.0, 255.0, 0., 1.0),
-                thickness,
-                imgproc::LINE_8,
-                0,
-            )?;
+            draw_inforced_circle(image, &pixel)?;
         }
         let zero = self.project_points(&Vector::from_elem(Point3f::new(0., 0., 0.), 1))?;
         let zero = zero.at::<Point2f>(0)?;
@@ -181,7 +159,7 @@ impl ExtrinsicCalibration {
             Point::new(zero.x.round() as _, zero.y.round() as _),
             14,
             core::Scalar::new(0.0, 0.0, 255.0, 1.0),
-            thickness,
+            THICKNESS,
             imgproc::LINE_8,
             0,
         )
@@ -189,30 +167,20 @@ impl ExtrinsicCalibration {
 
     fn debug_points<'a>(
         &'a self,
-        lut: &'a PixelToWorldLut,
+        transformer: &'a PixelToWorldTransformer,
     ) -> opencv::Result<Vec<(Point2f, Point2f)>> {
-        let transformer = &self.pixel_to_world_transformer()?;
         let square_len = self.intrinsic.board_square_length()?;
-        (-1..7)
-            .flat_map(|x| (-1..9).map(move |y| (x as f32 * square_len, y as f32 * square_len)))
+        (0..2)
+            .flat_map(|x| (0..2).map(move |y| (x as f32 * square_len, y as f32 * square_len)))
             .map(|(x, y)| {
                 let point_world = Point3f::new(x, y, 0.0);
                 let points_world = Vector::from_slice(&[point_world]);
                 let projected_points = self.project_points(&points_world)?;
                 let coord = projected_points.at::<Point2f>(0)?;
 
-                trace!("Pixel position for {points_world:?}: {:?}", coord);
-                let pixel_x_rounded = coord.x.round();
-                let pixel_y_rounded = coord.y.round();
+                println!("Pixel position for {points_world:?}: {:?}", coord);
                 let new_accurate = transformer.transform_point(coord.x, coord.y);
-                if (0..self.image_size.width).contains(&(pixel_x_rounded as i32))
-                    && (0..self.image_size.height).contains(&(pixel_y_rounded as i32))
-                {
-                    let new_lut = lut.get(pixel_x_rounded as _, pixel_y_rounded as _);
-                    trace!("World coordinates: (accurate: {new_accurate:?}, lut: {new_lut:?})");
-                } else {
-                    trace!("Not within the image (accurate: {new_accurate:?})");
-                }
+                println!("Transformed back: {new_accurate:?})");
 
                 Ok((Point2f::new(x, y), Point2f::new(coord.x, coord.y)))
             })
@@ -220,6 +188,11 @@ impl ExtrinsicCalibration {
     }
     fn project_points(&self, points_world: &Vector<Point3f>) -> opencv::Result<Mat> {
         let mut projected_points = Mat::default();
+
+        let points_world: Vector<Point3f> = points_world
+            .iter()
+            .map(|p| Point3_::new(p.y, p.x, p.z))
+            .collect();
 
         calib3d::project_points_def(
             &points_world,
@@ -243,12 +216,46 @@ impl ExtrinsicCalibration {
 
 // In your main function, after getting rvec and tvec from solvePnP:
 
+fn draw_inforced_circle(image: &mut Mat, pixel: &Point2f) -> opencv::Result<()> {
+    let pixel_quantisized = Point::new(pixel.x.round() as _, pixel.y.round() as _);
+    imgproc::circle(
+        image,
+        pixel_quantisized,
+        10,
+        core::Scalar::new(255.0, 0.0, 0.0, 1.0),
+        THICKNESS,
+        imgproc::LINE_8,
+        0,
+    )?;
+    imgproc::circle(
+        image,
+        pixel_quantisized,
+        12,
+        core::Scalar::new(0.0, 255.0, 0., 1.0),
+        THICKNESS,
+        imgproc::LINE_8,
+        0,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn run_charuco() -> opencv::Result<()> {
+    fn handle_charuco() {
+        match run_charuco() {
+            Ok(x) => {}
+            Err(CalibrationError::NotEnoughPoints { image, points }) => {
+                let mut output = Vector::new();
+                opencv::imgcodecs::imencode(".png", &image, &mut output, &Vector::new()).unwrap();
+                std::fs::write("NotEnoughPoints.png", &output).unwrap();
+                panic!("Not enouth points {points:?}");
+            }
+            i @ Err(_) => i.unwrap(),
+        }
+    }
+    fn run_charuco() -> CalibrationResult<()> {
         let iter = ImageIterable::from_dir("../charuco_raw_images");
         let intrinsic =
             IntrinsicCalibration::create(iter.iter_images().map(|(_, i)| i), Default::default())?;
@@ -264,15 +271,27 @@ mod tests {
             let distorted = distorted?;
             let undistorter = intrinsic.create_undistorter(distorted.size()?)?;
             let undistorted = undistorter.undistort(&distorted)?;
+            println!("Before extrinsic");
             let extrinsic = intrinsic.clone().calibrate_extrinsic(&distorted)?;
-            let world_transformer = extrinsic.build_world_to_pixel()?;
+            let world_transformer = extrinsic.pixel_to_world_transformer()?;
             for (label, mut image) in [("distorded", distorted), ("undistorted", undistorted)] {
                 let path = target_dir.join(format!("{stem}_{label}.png"));
+
+                let horizontal_pixels = [[1894, 552], [1713, 797]];
+                for [x_pixel, y_pixel] in horizontal_pixels {
+                    let [x_world, y_world] =
+                        world_transformer.transform_point(x_pixel as f32, y_pixel as f32);
+                    println!("In line? {x_world}, {y_world}");
+                    draw_inforced_circle(
+                        &mut image,
+                        &Point2f::new(x_pixel as f32, y_pixel as f32),
+                    )?;
+                }
 
                 extrinsic.draw_debug_points(&mut image, &world_transformer)?;
                 let mut output = Vector::new();
                 opencv::imgcodecs::imencode(".png", &image, &mut output, &Vector::new())?;
-                std::fs::write(path, &output).unwrap();
+                std::fs::write(&path, &output).unwrap();
                 //opencv::imgcodecs::imwrite(&path, &image, &Vector::new())?;
             }
         }

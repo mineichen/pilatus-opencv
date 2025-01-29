@@ -2,8 +2,7 @@
 resolver = "2"
 
 members = [
-  "pilatus-opencv",
-  "pilatus-opencv-rt"
+  "pilatus-opencv"
 ]
 
 [workspace.dependencies]

@@ -2,7 +2,7 @@ use std::num::NonZeroU32;
 
 use opencv::{
     calib3d::rodrigues,
-    core::{self, Mat},
+    core::{self, Mat, Size_},
     prelude::*,
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -13,32 +13,30 @@ trait PixelToWorld {
 
 #[derive(Debug, Clone)]
 pub struct PixelToWorldLut {
-    width: NonZeroU32,
-    height: NonZeroU32,
-    data: Box<[(f32, f32)]>,
+    image_size: Size_<NonZeroU32>,
+    data: Box<[[f32; 2]]>,
 }
 
 impl PixelToWorldLut {
-    pub fn new(
-        transformer: &PixelToWorldTransformer,
-        width: NonZeroU32,
-        height: NonZeroU32,
-    ) -> Self {
+    pub fn new(transformer: &PixelToWorldTransformer, image_size: Size_<NonZeroU32>) -> Self {
         Self {
-            width,
-            height,
-            data: (0..height.get())
+            image_size,
+            data: (0..image_size.height.get())
                 .into_par_iter()
-                .flat_map(|y| (0..width.get()).into_par_iter().map(move |x| (x, y)))
+                .flat_map(|y| {
+                    (0..image_size.width.get())
+                        .into_par_iter()
+                        .map(move |x| (x, y))
+                })
                 .map(|(x, y)| transformer.transform_point(x as f32, y as f32))
                 .collect::<Box<[_]>>(),
         }
     }
 
     #[inline(always)]
-    pub fn get(&self, x: u32, y: u32) -> (f32, f32) {
-        let width = self.width.get();
-        let height = self.height.get();
+    pub fn get(&self, x: u32, y: u32) -> [f32; 2] {
+        let width = self.image_size.width.get();
+        let height = self.image_size.height.get();
 
         assert!(x < width, "X coordinate {} exceeds width {}", x, width);
         assert!(y < height, "Y coordinate {} exceeds height {}", y, height);
@@ -47,9 +45,9 @@ impl PixelToWorldLut {
         unsafe { *self.data.get_unchecked((y * width + x) as usize) }
     }
     #[inline(always)]
-    pub unsafe fn get_unchecked(&self, idx: usize) -> (f32, f32) {
+    pub unsafe fn get_unchecked(&self, idx: usize) -> [f32; 2] {
         debug_assert!(
-            idx < self.width.get() as usize * self.height.get() as usize,
+            idx < self.image_size.width.get() as usize * self.image_size.height.get() as usize,
             "Invalid access"
         );
 
@@ -169,7 +167,7 @@ impl PixelToWorldTransformer {
     }
 
     #[inline]
-    pub fn transform_point(&self, x: f32, y: f32) -> (f32, f32) {
+    pub fn transform_point(&self, x: f32, y: f32) -> [f32; 2] {
         let x = x as f64;
         let y = y as f64;
 
@@ -202,6 +200,7 @@ impl PixelToWorldTransformer {
         let wx = (self.tvec_inv[0] + rx * t) as f32;
         let wy = (self.tvec_inv[1] + ry * t) as f32;
 
-        (wx, wy)
+        // Switched 28.01. because i didn't have time to investigate how coordinates are handled (one implementation depends, that 2d/3d are not viewed from other z-direction)
+        [wy, wx]
     }
 }
