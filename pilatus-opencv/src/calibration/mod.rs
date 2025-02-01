@@ -5,6 +5,7 @@ use opencv::{
     calib3d::{self},
     core::{self, Mat, MatTraitConst, Point, Point2f, Point3_, Point3f, Size_, Vector},
     imgproc,
+    prelude::CharucoBoardTraitConst,
 };
 use pilatus::device::{ActorError, ActorMessage};
 
@@ -169,9 +170,13 @@ impl ExtrinsicCalibration {
         &'a self,
         transformer: &'a PixelToWorldTransformer,
     ) -> opencv::Result<Vec<(Point2f, Point2f)>> {
-        let square_len = self.intrinsic.board_square_length()?;
-        (0..2)
-            .flat_map(|x| (0..2).map(move |y| (x as f32 * square_len, y as f32 * square_len)))
+        let board = self.intrinsic.board()?;
+        let square_len = board.get_square_length()?;
+        let board = board.get_chessboard_size()?;
+        ((-1)..(board.height + 2))
+            .flat_map(|x| {
+                (-1..(board.width + 2)).map(move |y| (x as f32 * square_len, y as f32 * square_len))
+            })
             .map(|(x, y)| {
                 let point_world = Point3f::new(x, y, 0.0);
                 let points_world = Vector::from_slice(&[point_world]);
@@ -277,16 +282,16 @@ mod tests {
             for (label, mut image) in [("distorded", distorted), ("undistorted", undistorted)] {
                 let path = target_dir.join(format!("{stem}_{label}.png"));
 
-                let horizontal_pixels = [[1894, 552], [1713, 797]];
-                for [x_pixel, y_pixel] in horizontal_pixels {
-                    let [x_world, y_world] =
-                        world_transformer.transform_point(x_pixel as f32, y_pixel as f32);
-                    println!("In line? {x_world}, {y_world}");
-                    draw_inforced_circle(
-                        &mut image,
-                        &Point2f::new(x_pixel as f32, y_pixel as f32),
-                    )?;
-                }
+                // let horizontal_pixels = [[1894, 552], [1713, 797]];
+                // for [x_pixel, y_pixel] in horizontal_pixels {
+                //     let [x_world, y_world] =
+                //         world_transformer.transform_point(x_pixel as f32, y_pixel as f32);
+                //     println!("In line? {x_world}, {y_world}");
+                //     draw_inforced_circle(
+                //         &mut image,
+                //         &Point2f::new(x_pixel as f32, y_pixel as f32),
+                //     )?;
+                // }
 
                 extrinsic.draw_debug_points(&mut image, &world_transformer)?;
                 let mut output = Vector::new();

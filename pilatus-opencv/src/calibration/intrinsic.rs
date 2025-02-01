@@ -20,6 +20,8 @@ type VectorOfMat = Vector<Mat>;
 #[derive(Clone)]
 pub struct IntrinsicCalibration {
     detector: Arc<CharucoDetector>,
+    // Threshold to generate threshold-image for marker detection
+    threshold: u8,
     camera_matrix: Mat,
     dist_coeffs: Mat,
 }
@@ -28,6 +30,7 @@ pub struct IntrinsicCalibration {
 pub struct IntrinsicCalibrationSettings {
     square_size_mm: f32,
     marker_size_mm: f32,
+    threshold: u8,
 }
 
 impl Default for IntrinsicCalibrationSettings {
@@ -35,6 +38,7 @@ impl Default for IntrinsicCalibrationSettings {
         Self {
             square_size_mm: 40.0,
             marker_size_mm: 20.0,
+            threshold: 145,
         }
     }
 }
@@ -61,8 +65,8 @@ impl IntrinsicCalibration {
         &self.camera_matrix
     }
 
-    pub fn board_square_length(&self) -> opencv::Result<f32> {
-        self.detector.get_board()?.get_square_length()
+    pub fn board(&self) -> opencv::Result<CharucoBoard> {
+        self.detector.get_board()
     }
 
     pub fn dist_coeffs(&self) -> &Mat {
@@ -84,6 +88,7 @@ impl IntrinsicCalibration {
             settings.marker_size_mm, // marker size
             &dictionary,
         )?;
+
         let detector = CharucoDetector::new_def(&board)?;
         // Collect all image paths
 
@@ -95,7 +100,8 @@ impl IntrinsicCalibration {
             .into_iter()
             .map(|img| {
                 let img = img?;
-                let (object_points, image_points) = Self::match_board(&detector, &img)?;
+                let (object_points, image_points) =
+                    Self::match_board(&detector, &img, settings.threshold)?;
                 all_object_points.push(object_points);
                 all_image_points.push(image_points);
 
@@ -151,11 +157,16 @@ impl IntrinsicCalibration {
             detector: Arc::new(detector),
             camera_matrix,
             dist_coeffs,
+            threshold: settings.threshold,
         })
     }
 
     // ObjectPoints/ImagePoints
-    fn match_board(detector: &CharucoDetector, input: &Mat) -> CalibrationResult<(Mat, Mat)> {
+    fn match_board(
+        detector: &CharucoDetector,
+        input: &Mat,
+        threshold: u8,
+    ) -> CalibrationResult<(Mat, Mat)> {
         println!("before board detect");
         let mut gray = Mat::default();
         opencv::imgproc::cvt_color(
@@ -167,7 +178,7 @@ impl IntrinsicCalibration {
         )?;
         println!("after gray");
         let mut binary = Mat::default();
-        opencv::imgproc::threshold(&gray, &mut binary, 150., 255., THRESH_BINARY)?;
+        opencv::imgproc::threshold(&gray, &mut binary, threshold as f64, 255., THRESH_BINARY)?;
 
         println!("after thres");
         let mut corners = Mat::default();
@@ -219,7 +230,8 @@ impl IntrinsicCalibration {
 
     pub fn calibrate_extrinsic(self, distorted: &Mat) -> CalibrationResult<ExtrinsicCalibration> {
         let signed_image_size = distorted.size()?;
-        let (object_points, image_points) = Self::match_board(&self.detector, &distorted)?;
+        let (object_points, image_points) =
+            Self::match_board(&self.detector, &distorted, self.threshold)?;
 
         // Estimate pose using solvePnP
         let mut rvec = Mat::default();
