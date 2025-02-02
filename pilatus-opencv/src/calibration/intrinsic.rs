@@ -167,7 +167,7 @@ impl IntrinsicCalibration {
         input: &Mat,
         threshold: u8,
     ) -> CalibrationResult<(Mat, Mat)> {
-        println!("before board detect");
+        //println!("before board detect");
         let mut gray = Mat::default();
         opencv::imgproc::cvt_color(
             &input,
@@ -176,11 +176,11 @@ impl IntrinsicCalibration {
             0,
             core::AlgorithmHint::ALGO_HINT_DEFAULT,
         )?;
-        println!("after gray");
+        //println!("after gray");
         let mut binary = Mat::default();
         opencv::imgproc::threshold(&gray, &mut binary, threshold as f64, 255., THRESH_BINARY)?;
 
-        println!("after thres");
+        //println!("after thres");
         let mut corners = Mat::default();
         let mut ids = Mat::default();
 
