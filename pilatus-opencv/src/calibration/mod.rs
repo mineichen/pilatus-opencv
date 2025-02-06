@@ -183,9 +183,8 @@ impl ExtrinsicCalibration {
                 let projected_points = self.project_points(&points_world)?;
                 let coord = projected_points.at::<Point2f>(0)?;
 
-                println!("Pixel position for {points_world:?}: {:?}", coord);
-                let new_accurate = transformer.transform_point(coord.x, coord.y);
-                println!("Transformed back: {new_accurate:?})");
+               
+                let new_accurate = transformer.transform_point(coord.x, coord.y); trace!("Pixel position for {points_world:?}: {coord:?}, Transformed back: {new_accurate:?})");
 
                 Ok((Point2f::new(x, y), Point2f::new(coord.x, coord.y)))
             })

@@ -128,7 +128,7 @@ impl IntrinsicCalibration {
             | calib3d::CALIB_ZERO_TANGENT_DIST
             | calib3d::CALIB_USE_LU;
 
-        println!("Before cali_camera");
+        trace!("Before cali_camera");
         let error = calib3d::calibrate_camera(
             &all_object_points,
             &all_image_points,
@@ -140,7 +140,6 @@ impl IntrinsicCalibration {
             flags,
             core::TermCriteria::default()?,
         )?;
-        println!("After cali camera");
         debug!("Calibration error: {}", error);
         trace!("Camera matrix:\n{:?}", camera_matrix);
         trace!("Distortion coefficients:\n{:?}", dist_coeffs);
@@ -191,7 +190,7 @@ impl IntrinsicCalibration {
         let num_detected = corners.rows();
         if num_detected < 20 {
             let points = if num_detected != 0 {
-                println!("after board {}", corners.rows());
+                trace!("after board {}", corners.rows());
                 let points: Vec<_> = corners.iter::<Point2f>()?.map(|(_, p)| p).collect();
                 for p in points.iter() {
                     super::draw_inforced_circle(&mut binary, p)?;
@@ -201,7 +200,7 @@ impl IntrinsicCalibration {
                 Vec::new()
             };
 
-            println!("Corners {:?}", corners);
+            debug!("Corners in calibration image: {corners:?}");
             return Err(CalibrationError::NotEnoughPoints {
                 image: binary,
                 points,
@@ -210,16 +209,16 @@ impl IntrinsicCalibration {
         let mut object_points = Mat::default();
         let mut image_points = Mat::default();
 
-        println!("before match_image_points");
+        trace!("before match_image_points");
         board.match_image_points(&corners, &ids, &mut object_points, &mut image_points)?;
-        println!("after match_image_points");
+        trace!("after match_image_points");
 
-        if corners.rows() < 4 {
-            let points: Vec<_> = corners.iter::<Point2f>()?.map(|(_, p)| p).collect();
+        if image_points.rows() < 4 {
+            let points: Vec<_> = image_points.iter::<Point2f>()?.map(|(_, p)| p).collect();
             for p in points.iter() {
                 super::draw_inforced_circle(&mut binary, p)?;
             }
-            println!("Corners {:?}", corners);
+            debug!("Corners in reference image: {corners:?}");
             return Err(CalibrationError::NotEnoughPoints {
                 image: binary,
                 points,
