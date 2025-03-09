@@ -9,6 +9,7 @@ use opencv::{
     },
     prelude::{CharucoDetectorTraitConst, *},
 };
+use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use crate::calibration::CalibrationResult;
@@ -26,7 +27,7 @@ pub struct IntrinsicCalibration {
     dist_coeffs: Mat,
 }
 
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct IntrinsicCalibrationSettings {
     square_size_mm: f32,
     marker_size_mm: f32,

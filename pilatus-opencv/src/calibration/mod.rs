@@ -3,7 +3,7 @@ use std::{num::NonZeroU32, path::Path, sync::Arc};
 use futures::stream::BoxStream;
 use opencv::{
     calib3d::{self},
-    core::{self, Mat, MatTraitConst, Point, Point2f, Point3_, Point3f, Size_, Vector},
+    core::{self, Mat, MatTrait, MatTraitConst, Point, Point2f, Point3_, Point3f, Size_, Vector},
     imgproc,
     prelude::CharucoBoardTraitConst,
 };
@@ -14,7 +14,9 @@ mod pixel_to_world;
 
 pub use intrinsic::*;
 pub use pixel_to_world::*;
+use serde::{Deserialize, Serialize};
 use tracing::trace;
+use typed_floats::NonNaNFinite;
 
 pub type CalibrationResult<T> = Result<T, CalibrationError>;
 const THICKNESS: i32 = 2;
@@ -127,6 +129,18 @@ impl ExtrinsicCalibration {
         self.image_size
     }
 
+    pub fn apply_offset(&mut self, offsets: &OrientationOffset) {
+        for i in 0..3 {
+            let rot = self.rvec.at_mut::<f64>(i as i32).unwrap_or_else(|_| panic!("created from calibration rot {i}"));
+            *rot = *rot + offsets.angle[i].get();
+        }
+
+        for i in 0..3 {
+            let trans = self.tvec.at_mut::<f64>(i as i32).unwrap_or_else(|_| panic!("created from calibration trans {i}"));
+            *trans = *trans + offsets.translation[i].get();
+        }       
+    }
+
     pub fn build_pixel_to_world(&self) -> opencv::Result<PixelToWorldLut> {
         let transformer = self.pixel_to_world_transformer()?;
         let time = std::time::Instant::now();
@@ -220,6 +234,13 @@ impl ExtrinsicCalibration {
 
 // In your main function, after getting rvec and tvec from solvePnP:
 
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct OrientationOffset {
+    angle: [NonNaNFinite; 3],
+    translation: [NonNaNFinite; 3],
+}
+
 fn draw_inforced_circle(image: &mut Mat, pixel: &Point2f) -> opencv::Result<()> {
     let pixel_quantisized = Point::new(pixel.x.round() as _, pixel.y.round() as _);
     imgproc::circle(
@@ -261,6 +282,7 @@ mod tests {
     }
     fn run_charuco() -> CalibrationResult<()> {
         let iter = ImageIterable::from_dir("../charuco_raw_images");
+        //let iter = ImageIterable::from_dir("/Users/mineichen/Downloads/2Caps");
         let intrinsic =
             IntrinsicCalibration::create(iter.iter_images().map(|(_, i)| i), Default::default())?;
         let target_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

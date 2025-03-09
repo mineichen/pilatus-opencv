@@ -12,6 +12,10 @@ rayon = "1.10.0"
 serde = { workspace = true }
 thiserror = "2"
 tracing = { workspace = true }
+typed_floats = { version = "1.0.3", features = ["serde"] }
 
 [dev-dependencies]
 opencv = { workspace = true, features = ["clang-runtime"] }
+
+[features]
+clang-runtime = ["opencv/clang-runtime"]
