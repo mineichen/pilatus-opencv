@@ -259,8 +259,7 @@ impl IntrinsicCalibration {
 
         Ok(ExtrinsicCalibration {
             intrinsic: self,
-            rvec,
-            tvec,
+            position: super::CameraPosition { rvec, tvec },
             image_size,
         })
     }

@@ -1,4 +1,4 @@
-use std::{num::NonZeroU32, path::Path, sync::Arc};
+use std::{fmt::Debug, num::NonZeroU32, path::Path, sync::Arc};
 
 use futures::stream::BoxStream;
 use opencv::{
@@ -118,25 +118,45 @@ impl Undistorter {
         Ok(undistorted)
     }
 }
-pub struct ExtrinsicCalibration {
-    intrinsic: IntrinsicCalibration,
+
+pub struct CameraPosition {
     rvec: Mat,
     tvec: Mat,
+}
+
+impl Debug for CameraPosition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let r = [self.rvec.at::<f64>(0).expect("3x1 vec"), self.rvec.at::<f64>(1).expect("3x1 vec"), self.rvec.at::<f64>(2).expect("3x1 vec")];
+        let t = [self.tvec.at::<f64>(0).expect("3x1 vec"), self.tvec.at::<f64>(1).expect("3x1 vec"), self.tvec.at::<f64>(2).expect("3x1 vec")];
+        f.debug_struct("CameraPosition").field("rvec", &r).field("tvec", &t).finish()
+    }
+}
+
+pub struct ExtrinsicCalibration {
+    intrinsic: IntrinsicCalibration,
+    position: CameraPosition,
     image_size: Size_<NonZeroU32>,
 }
+
+
+
 impl ExtrinsicCalibration {
     pub fn image_size(&self) -> Size_<NonZeroU32> {
         self.image_size
     }
 
+    pub fn position(&self) -> &CameraPosition {
+        &self.position
+    }
+
     pub fn apply_offset(&mut self, offsets: &OrientationOffset) {
         for i in 0..3 {
-            let rot = self.rvec.at_mut::<f64>(i as i32).unwrap_or_else(|_| panic!("created from calibration rot {i}"));
+            let rot = self.position.rvec.at_mut::<f64>(i as i32).unwrap_or_else(|_| panic!("created from calibration rot {i}"));
             *rot = *rot + offsets.angle[i].get();
         }
 
         for i in 0..3 {
-            let trans = self.tvec.at_mut::<f64>(i as i32).unwrap_or_else(|_| panic!("created from calibration trans {i}"));
+            let trans = self.position.tvec.at_mut::<f64>(i as i32).unwrap_or_else(|_| panic!("created from calibration trans {i}"));
             *trans = *trans + offsets.translation[i].get();
         }       
     }
@@ -152,8 +172,8 @@ impl ExtrinsicCalibration {
     pub fn pixel_to_world_transformer(&self) -> opencv::Result<PixelToWorldTransformer> {
         PixelToWorldTransformer::new(
             self.camera_matrix(),
-            &self.rvec,
-            &self.tvec,
+            &self.position.rvec,
+            &self.position.tvec,
             &self.dist_coeffs(),
         )
     }
@@ -214,8 +234,8 @@ impl ExtrinsicCalibration {
 
         calib3d::project_points_def(
             &points_world,
-            &self.rvec,
-            &self.tvec,
+            &self.position.rvec,
+            &self.position.tvec,
             &self.camera_matrix(),
             &self.dist_coeffs(),
             &mut projected_points,
