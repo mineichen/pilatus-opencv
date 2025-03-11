@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use opencv::{
     calib3d::{self},
-    core::{self, Mat, Point2f, Size_, Vector},
+    core::{self, Mat, Point2f, Point3f, Size_, Vector},
     imgproc::{self, THRESH_BINARY},
     objdetect::{
         get_predefined_dictionary, CharucoBoard, CharucoDetector, PredefinedDictionaryType,
@@ -228,11 +228,12 @@ impl IntrinsicCalibration {
         Ok((object_points, image_points))
     }
 
-    pub fn calibrate_extrinsic(self, distorted: &Mat) -> CalibrationResult<ExtrinsicCalibration> {
-        let signed_image_size = distorted.size()?;
-        let (object_points, image_points) =
-            Self::match_board(&self.detector, &distorted, self.threshold)?;
-
+    pub fn calibrate_extrinsic_points(
+        self,
+        object_points: &Mat,
+        image_points: &Mat,
+        signed_image_size: Size_<i32>,
+    ) -> CalibrationResult<ExtrinsicCalibration> {
         // Estimate pose using solvePnP
         let mut rvec = Mat::default();
         let mut tvec = Mat::default();
@@ -262,5 +263,22 @@ impl IntrinsicCalibration {
             position: super::CameraPosition { rvec, tvec },
             image_size,
         })
+    }
+
+    pub fn calibrate_extrinsic(self, distorted: &Mat) -> CalibrationResult<ExtrinsicCalibration> {
+        let signed_image_size = distorted.size()?;
+        let (object_points, image_points) =
+            Self::match_board(&self.detector, &distorted, self.threshold)?;
+
+        // for x in object_points.iter::<Point3f>()?.map(|(_, x)| x) {
+        //     trace!("World: {x:?}");
+        // }
+
+        tracing::info!("Before writing image points: {image_points:?}");
+        // for x in image_points.iter::<Point2f>()?.map(|(_, x)| x) {
+        //     trace!("Image: {x:?}");
+        // }
+
+        self.calibrate_extrinsic_points(&object_points, &image_points, signed_image_size)
     }
 }
