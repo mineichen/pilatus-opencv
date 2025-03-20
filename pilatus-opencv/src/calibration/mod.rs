@@ -5,7 +5,7 @@ use opencv::{
     calib3d::{self},
     core::{self, Mat, MatTrait, MatTraitConst, Point, Point2f, Point3_, Point3f, Size_, Vector},
     imgproc,
-    prelude::CharucoBoardTraitConst,
+    prelude::*,
 };
 use pilatus::device::{ActorError, ActorMessage};
 
@@ -28,11 +28,17 @@ pub enum CalibrationError {
     #[error("Not enough points found")]
     NotEnoughPoints { image: Mat, points: Vec<Point2f> },
     #[error("{0:?}")]
-    Other(Arc<opencv::Error>),
+    Other(Arc<crate::Error>),
 }
 
 impl From<opencv::Error> for CalibrationError {
     fn from(value: opencv::Error) -> Self {
+        CalibrationError::Other(Arc::new(value.into()))
+    }
+}
+
+impl From<crate::Error> for CalibrationError {
+    fn from(value: crate::Error) -> Self {
         CalibrationError::Other(Arc::new(value))
     }
 }
@@ -87,11 +93,11 @@ impl ImageIterable {
         Self { paths }
     }
 
-    fn iter_images(&self) -> impl Iterator<Item = (&'_ str, opencv::Result<Mat>)> {
+    fn iter_images(&self) -> impl Iterator<Item = (&'_ str, Result<Mat, crate::Error>)> {
         self.paths.iter().map(|p| {
             (
                 p.as_str(),
-                opencv::imgcodecs::imread(p, opencv::imgcodecs::IMREAD_COLOR),
+                opencv::imgcodecs::imread(p, opencv::imgcodecs::IMREAD_COLOR).map_err(Into::into),
             )
         })
     }
@@ -103,7 +109,7 @@ pub struct Undistorter {
 }
 
 impl Undistorter {
-    fn undistort(&self, distorted: &Mat) -> opencv::Result<Mat> {
+    fn undistort(&self, distorted: &Mat) -> Result<Mat, crate::Error> {
         let mut undistorted = Mat::default();
         // Remap the image
         imgproc::remap(
@@ -126,9 +132,20 @@ pub struct CameraPosition {
 
 impl Debug for CameraPosition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let r = [self.rvec.at::<f64>(0).expect("3x1 vec"), self.rvec.at::<f64>(1).expect("3x1 vec"), self.rvec.at::<f64>(2).expect("3x1 vec")];
-        let t = [self.tvec.at::<f64>(0).expect("3x1 vec"), self.tvec.at::<f64>(1).expect("3x1 vec"), self.tvec.at::<f64>(2).expect("3x1 vec")];
-        f.debug_struct("CameraPosition").field("rvec", &r).field("tvec", &t).finish()
+        let r = [
+            self.rvec.at_2d::<f64>(0, 0).expect("3x1 vec"),
+            self.rvec.at_2d::<f64>(1, 0).expect("3x1 vec"),
+            self.rvec.at_2d::<f64>(2, 0).expect("3x1 vec"),
+        ];
+        let t = [
+            self.tvec.at_2d::<f64>(0, 0).expect("3x1 vec"),
+            self.tvec.at_2d::<f64>(1, 0).expect("3x1 vec"),
+            self.tvec.at_2d::<f64>(2, 0).expect("3x1 vec"),
+        ];
+        f.debug_struct("CameraPosition")
+            .field("rvec", &r)
+            .field("tvec", &t)
+            .finish()
     }
 }
 
@@ -137,8 +154,6 @@ pub struct ExtrinsicCalibration {
     position: CameraPosition,
     image_size: Size_<NonZeroU32>,
 }
-
-
 
 impl ExtrinsicCalibration {
     pub fn image_size(&self) -> Size_<NonZeroU32> {
@@ -150,18 +165,27 @@ impl ExtrinsicCalibration {
     }
 
     pub fn apply_offset(&mut self, offsets: &OrientationOffset) {
-        for i in 0..3 {
-            let rot = self.position.rvec.at_mut::<f64>(i as i32).unwrap_or_else(|_| panic!("created from calibration rot {i}"));
-            *rot = *rot + offsets.angle[i].get();
+        for ((_, rot), offset) in self
+            .position
+            .rvec
+            .iter_mut::<f64>()
+            .unwrap()
+            .zip(offsets.angle.iter())
+        {
+            *rot = *rot + offset.get();
         }
-
-        for i in 0..3 {
-            let trans = self.position.tvec.at_mut::<f64>(i as i32).unwrap_or_else(|_| panic!("created from calibration trans {i}"));
-            *trans = *trans + offsets.translation[i].get();
-        }       
+        for ((_, trans), offset) in self
+            .position
+            .tvec
+            .iter_mut::<f64>()
+            .unwrap()
+            .zip(offsets.translation.iter())
+        {
+            *trans = *trans + offset.get();
+        }
     }
 
-    pub fn build_pixel_to_world(&self) -> opencv::Result<PixelToWorldLut> {
+    pub fn build_pixel_to_world(&self) -> Result<PixelToWorldLut, crate::Error> {
         let transformer = self.pixel_to_world_transformer()?;
         let time = std::time::Instant::now();
         let lut = PixelToWorldLut::new(&transformer, self.image_size);
@@ -169,7 +193,7 @@ impl ExtrinsicCalibration {
         Ok(lut)
     }
 
-    pub fn pixel_to_world_transformer(&self) -> opencv::Result<PixelToWorldTransformer> {
+    pub fn pixel_to_world_transformer(&self) -> Result<PixelToWorldTransformer, crate::Error> {
         PixelToWorldTransformer::new(
             self.camera_matrix(),
             &self.position.rvec,
@@ -182,7 +206,7 @@ impl ExtrinsicCalibration {
         &self,
         image: &mut Mat,
         transformer: &PixelToWorldTransformer,
-    ) -> opencv::Result<()> {
+    ) -> Result<(), crate::Error> {
         for (_, pixel) in self.debug_points(transformer)? {
             draw_inforced_circle(image, &pixel)?;
         }
@@ -197,13 +221,14 @@ impl ExtrinsicCalibration {
             THICKNESS,
             imgproc::LINE_8,
             0,
-        )
+        )?;
+        Ok(())
     }
 
     fn debug_points<'a>(
         &'a self,
         transformer: &'a PixelToWorldTransformer,
-    ) -> opencv::Result<Vec<(Point2f, Point2f)>> {
+    ) -> Result<Vec<(Point2f, Point2f)>, crate::Error> {
         let board = self.intrinsic.board()?;
         let square_len = board.get_square_length()?;
         let board = board.get_chessboard_size()?;
@@ -217,14 +242,14 @@ impl ExtrinsicCalibration {
                 let projected_points = self.project_points(&points_world)?;
                 let coord = projected_points.at::<Point2f>(0)?;
 
-               
+
                 let new_accurate = transformer.transform_point(coord.x, coord.y); trace!("Pixel position for {points_world:?}: {coord:?}, Transformed back: {new_accurate:?})");
 
                 Ok((Point2f::new(x, y), Point2f::new(coord.x, coord.y)))
             })
             .collect()
     }
-    fn project_points(&self, points_world: &Vector<Point3f>) -> opencv::Result<Mat> {
+    fn project_points(&self, points_world: &Vector<Point3f>) -> Result<Mat, crate::Error> {
         let mut projected_points = Mat::default();
 
         let points_world: Vector<Point3f> = points_world
@@ -261,7 +286,7 @@ pub struct OrientationOffset {
     translation: [NonNaNFinite; 3],
 }
 
-fn draw_inforced_circle(image: &mut Mat, pixel: &Point2f) -> opencv::Result<()> {
+fn draw_inforced_circle(image: &mut Mat, pixel: &Point2f) -> Result<(), crate::Error> {
     let pixel_quantisized = Point::new(pixel.x.round() as _, pixel.y.round() as _);
     imgproc::circle(
         image,
@@ -280,7 +305,8 @@ fn draw_inforced_circle(image: &mut Mat, pixel: &Point2f) -> opencv::Result<()> 
         THICKNESS,
         imgproc::LINE_8,
         0,
-    )
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -288,6 +314,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires local files"]
     fn handle_charuco() {
         match run_charuco() {
             Ok(x) => {}

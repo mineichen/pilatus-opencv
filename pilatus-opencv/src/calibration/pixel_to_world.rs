@@ -68,7 +68,7 @@ impl PixelToWorldTransformer {
         rvec: &Mat,
         tvec: &Mat,
         dist_coeffs: &Mat,
-    ) -> opencv::Result<Self> {
+    ) -> Result<Self, crate::Error> {
         // Validate matrix sizes at initialization
         if camera_matrix.rows() != 3 || camera_matrix.cols() != 3 {
             return Err(opencv::Error::new(
@@ -78,7 +78,8 @@ impl PixelToWorldTransformer {
                     camera_matrix.rows(),
                     camera_matrix.cols()
                 ),
-            ));
+            )
+            .into());
         }
 
         // Compute rotation matrix inverse
@@ -92,7 +93,8 @@ impl PixelToWorldTransformer {
                     camera_matrix.rows(),
                     camera_matrix.cols()
                 ),
-            ));
+            )
+            .into());
         }
 
         let rot_mat_inv_cv = rot_mat.inv_def()?.to_mat()?;
@@ -123,22 +125,21 @@ impl PixelToWorldTransformer {
                     camera_matrix.rows(),
                     camera_matrix.cols()
                 ),
-            ));
+            )
+            .into());
         }
-
         // Convert translation vector to array
         let mut tvec_inv = [0.0; 3];
-        for i in 0..3 {
-            tvec_inv[i] = *tvec_inv_mat.at::<f64>(i as i32)?;
+        for ((_, tvec_val), tvec_inv_val) in tvec_inv_mat.iter::<f64>()?.zip(tvec_inv.iter_mut()) {
+            *tvec_inv_val = tvec_val;
         }
 
         // Convert camera matrix inverse to array
         let cam_matrix_inv = camera_matrix.inv_def()?.to_mat()?;
         if cam_matrix_inv.rows() != 3 || cam_matrix_inv.cols() != 3 {
-            return Err(opencv::Error::new(
-                core::StsBadArg,
-                "Camera matrix inverse must be 3x3",
-            ));
+            return Err(
+                opencv::Error::new(core::StsBadArg, "Camera matrix inverse must be 3x3").into(),
+            );
         }
 
         let mut cam_matrix_inv_arr = [[0.0; 3]; 3];

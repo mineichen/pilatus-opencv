@@ -45,7 +45,10 @@ impl Default for IntrinsicCalibrationSettings {
 }
 
 impl IntrinsicCalibration {
-    pub fn create_undistorter(&self, image_size: core::Size_<i32>) -> opencv::Result<Undistorter> {
+    pub fn create_undistorter(
+        &self,
+        image_size: core::Size_<i32>,
+    ) -> Result<Undistorter, crate::Error> {
         let mut map1 = Mat::default();
         let mut map2 = Mat::default();
 
@@ -66,8 +69,8 @@ impl IntrinsicCalibration {
         &self.camera_matrix
     }
 
-    pub fn board(&self) -> opencv::Result<CharucoBoard> {
-        self.detector.get_board()
+    pub fn board(&self) -> Result<CharucoBoard, crate::Error> {
+        self.detector.get_board().map_err(Into::into)
     }
 
     pub fn dist_coeffs(&self) -> &Mat {
@@ -75,7 +78,7 @@ impl IntrinsicCalibration {
     }
 
     pub fn create(
-        images: impl IntoIterator<Item = opencv::Result<Mat>>,
+        images: impl IntoIterator<Item = Result<Mat, crate::Error>>,
         settings: IntrinsicCalibrationSettings,
     ) -> Result<IntrinsicCalibration, CalibrationError> {
         // Directory containing calibration images
@@ -257,6 +260,8 @@ impl IntrinsicCalibration {
                 .and_then(|signed| signed.try_into())
                 .map_err(opencv::Error::from)?,
         );
+        dbg!(&rvec);
+        dbg!(&tvec);
 
         Ok(ExtrinsicCalibration {
             intrinsic: self,
