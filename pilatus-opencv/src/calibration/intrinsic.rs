@@ -260,8 +260,8 @@ impl IntrinsicCalibration {
                 .and_then(|signed| signed.try_into())
                 .map_err(opencv::Error::from)?,
         );
-        dbg!(&rvec);
-        dbg!(&tvec);
+        //dbg!(&rvec);
+        //dbg!(&tvec);
 
         Ok(ExtrinsicCalibration {
             intrinsic: self,
