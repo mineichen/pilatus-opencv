@@ -1,6 +1,5 @@
 pub mod calibration;
 mod image;
-use std::backtrace::Backtrace;
 
 pub use image::*;
 

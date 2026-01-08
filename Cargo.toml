@@ -13,6 +13,7 @@ futures = "0.3"
 image = { version = "0.25", default-features = false, features = [
   "png",
 ]}
+imbuf = { git = "https://github.com/mineichen/imbuf.git" }
 minfac = "0.1"
 opencv = { version= "0.94.1", default-features = false, features = ["calib3d", "imgcodecs", "imgproc", "objdetect"] }
 serde = "1"

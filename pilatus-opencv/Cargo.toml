@@ -7,7 +7,8 @@ edition = "2021"
 futures = "0.3"
 opencv = { workspace = true }
 pilatus = { git = "https://github.com/mineichen/pilatus.git", branch = "main" }
-pilatus-engineering = { git = "https://github.com/mineichen/pilatus.git", branch = "main", features = ["image"] }
+pilatus-engineering = { git = "https://github.com/mineichen/pilatus.git", branch = "main" }
+imbuf.workspace = true
 rayon = "1.10.0"
 serde = { workspace = true }
 thiserror = "2"
