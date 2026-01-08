@@ -17,6 +17,7 @@ typed_floats = { version = "1.0.3", features = ["serde"] }
 
 [dev-dependencies]
 opencv = { workspace = true, features = ["clang-runtime"] }
+image = { workspace = true, default-features = false, features = ["png"] }
 
 [features]
 clang-runtime = ["opencv/clang-runtime"]

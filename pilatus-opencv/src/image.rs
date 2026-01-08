@@ -70,13 +70,16 @@ impl<'mat, 'img: 'mat, T: PixelType + 'static + opencv::core::DataType> TryFrom<
 mod tests {
     use std::num::NonZeroU32;
 
+    use opencv::core::Vector;
     use opencv::prelude::MatTraitConst;
     use opencv::prelude::MatTraitConstManual;
 
     use super::*;
 
-    fn imbuf_image_to_borrowed_mat_preserves_dims_and_content<T>(pixels: Vec<T>)
-    where
+    fn imbuf_image_to_borrowed_mat_preserves_dims_and_content<T>(
+        pixels: Vec<T>,
+        decode_png_to_vec: impl Fn(&[u8]) -> Vec<T>,
+    ) where
         T: PixelType + opencv::core::DataType + std::fmt::Debug + PartialEq + 'static,
     {
         let width = NonZeroU32::new(3).unwrap();
@@ -94,15 +97,33 @@ mod tests {
         let mat_data = mat.data_typed::<T>().unwrap();
         assert_eq!(mat_data, img.buffer());
         assert_eq!(mat_data.as_ptr() as usize, img.buffer().as_ptr() as usize);
+
+        // Encode the borrowed Mat as PNG, reload via the `image` crate, and compare decoded pixels
+        // with the original image buffer.
+        let mut png = Vector::<u8>::new();
+        opencv::imgcodecs::imencode(".png", mat, &mut png, &Vector::new()).unwrap();
+        let decoded = decode_png_to_vec(png.as_slice());
+        assert_eq!(decoded, img.buffer());
     }
 
     #[test]
     fn imbuf_image_u8_to_borrowed_mat_preserves_dims_and_content() {
-        imbuf_image_to_borrowed_mat_preserves_dims_and_content(vec![0u8, 1, 2, 3, 4, 5]);
+        imbuf_image_to_borrowed_mat_preserves_dims_and_content(vec![0u8, 1, 2, 3, 4, 5], |png| {
+            match image::load_from_memory_with_format(png, image::ImageFormat::Png).unwrap() {
+                image::DynamicImage::ImageLuma8(img) => img.into_vec(),
+                other => panic!("Expected Luma8 PNG, got {other:?}"),
+            }
+        });
     }
 
     #[test]
     fn imbuf_image_u16_to_borrowed_mat_preserves_dims_and_content() {
-        imbuf_image_to_borrowed_mat_preserves_dims_and_content(vec![10u16, 20, 30, 40, 50, 60]);
+        imbuf_image_to_borrowed_mat_preserves_dims_and_content(
+            vec![10u16, 20, 30, 40, 50, 60],
+            |png| match image::load_from_memory_with_format(png, image::ImageFormat::Png).unwrap() {
+                image::DynamicImage::ImageLuma16(img) => img.into_vec(),
+                other => panic!("Expected Luma16 PNG, got {other:?}"),
+            },
+        );
     }
 }
