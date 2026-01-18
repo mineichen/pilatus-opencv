@@ -22,7 +22,7 @@ impl<'mat, 'img: 'mat> TryFrom<&'img DynamicImage> for BorrowImage<'mat> {
 
     fn try_from(value: &'img DynamicImage) -> Result<Self, Self::Error> {
         match (
-            value.len(),
+            value.len().get(),
             value.first().pixel_elements().get(),
             value.first(),
         ) {
