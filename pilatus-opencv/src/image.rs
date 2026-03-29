@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use imbuf::{ImageChannel, PixelType};
 use opencv::{boxed_ref::BoxedRef, core::Mat};
-use pilatus_engineering::image::{DynamicImage, Image, UnsupportedImageError};
+use pilatus_engineering::image::{DynamicImage, Image};
 
 pub struct BorrowImage<'mat>(BoxedRef<'mat, Mat>);
 impl<'a> Deref for BorrowImage<'a> {
@@ -31,8 +31,7 @@ impl<'mat, 'img: 'mat> TryFrom<&'img DynamicImage> for BorrowImage<'mat> {
             _ => Err(opencv::Error::new(
                 opencv::core::Code::StsUnsupportedFormat.into(),
                 "unsupported format",
-            )
-            .into()),
+            )),
         }
     }
 }

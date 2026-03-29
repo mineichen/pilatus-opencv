@@ -7,10 +7,6 @@ use opencv::{
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-trait PixelToWorld {
-    fn convert(x: f32, y: f32) -> (f32, f32);
-}
-
 #[derive(Debug, Clone)]
 pub struct PixelToWorldLut {
     image_size: Size_<NonZeroU32>,
@@ -44,6 +40,8 @@ impl PixelToWorldLut {
         // SAFETY: Verified by assert!
         unsafe { *self.data.get_unchecked((y * width + x) as usize) }
     }
+    /// # Safety
+    /// `idx` must be less than `image_size.width * image_size.height`.
     #[inline(always)]
     pub unsafe fn get_unchecked(&self, idx: usize) -> [f32; 2] {
         debug_assert!(
@@ -100,9 +98,9 @@ impl PixelToWorldTransformer {
         let rot_mat_inv_cv = rot_mat.inv_def()?.to_mat()?;
         // Convert rotation matrix to array
         let mut rot_mat_inv = [[0.0; 3]; 3];
-        for row in 0..3 {
-            for col in 0..3 {
-                rot_mat_inv[row][col] = *rot_mat_inv_cv.at_2d::<f64>(row as i32, col as i32)?;
+        for (row, rot_row) in rot_mat_inv.iter_mut().enumerate() {
+            for (col, val) in rot_row.iter_mut().enumerate() {
+                *val = *rot_mat_inv_cv.at_2d::<f64>(row as i32, col as i32)?;
             }
         }
 
@@ -143,10 +141,9 @@ impl PixelToWorldTransformer {
         }
 
         let mut cam_matrix_inv_arr = [[0.0; 3]; 3];
-        for row in 0..3 {
-            for col in 0..3 {
-                cam_matrix_inv_arr[row][col] =
-                    *cam_matrix_inv.at_2d::<f64>(row as i32, col as i32)?;
+        for (row, cam_row) in cam_matrix_inv_arr.iter_mut().enumerate() {
+            for (col, val) in cam_row.iter_mut().enumerate() {
+                *val = *cam_matrix_inv.at_2d::<f64>(row as i32, col as i32)?;
             }
         }
         let kappa = if dist_coeffs.rows() >= 1 && dist_coeffs.cols() >= 1 {

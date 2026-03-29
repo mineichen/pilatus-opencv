@@ -1,8 +1,8 @@
-use std::sync::Arc;
+use std::rc::Rc;
 
 use opencv::{
     calib3d::{self},
-    core::{self, Mat, Point2f, Point3f, Size_, Vector},
+    core::{self, Mat, Point2f, Size_, Vector},
     imgproc::{self, THRESH_BINARY},
     objdetect::{
         get_predefined_dictionary, CharucoBoard, CharucoDetector, PredefinedDictionaryType,
@@ -20,7 +20,7 @@ type VectorOfMat = Vector<Mat>;
 
 #[derive(Clone)]
 pub struct IntrinsicCalibration {
-    detector: Arc<CharucoDetector>,
+    detector: Rc<CharucoDetector>,
     // Threshold to generate threshold-image for marker detection
     threshold: u8,
     camera_matrix: Mat,
@@ -113,7 +113,7 @@ impl IntrinsicCalibration {
             })
             .collect::<CalibrationResult<Vec<_>>>()?;
 
-        let image_size = *sizes.get(0).ok_or_else(|| {
+        let image_size = *sizes.first().ok_or_else(|| {
             opencv::Error::new(
                 core::StsBadArg,
                 "Require at least one input image to perform calibration",
@@ -157,7 +157,7 @@ impl IntrinsicCalibration {
         )?;
 
         Ok(Self {
-            detector: Arc::new(detector),
+            detector: Rc::new(detector),
             camera_matrix,
             dist_coeffs,
             threshold: settings.threshold,
@@ -273,7 +273,7 @@ impl IntrinsicCalibration {
     pub fn calibrate_extrinsic(self, distorted: &Mat) -> CalibrationResult<ExtrinsicCalibration> {
         let signed_image_size = distorted.size()?;
         let (object_points, image_points) =
-            Self::match_board(&self.detector, &distorted, self.threshold)?;
+            Self::match_board(&self.detector, distorted, self.threshold)?;
 
         // for x in object_points.iter::<Point3f>()?.map(|(_, x)| x) {
         //     trace!("World: {x:?}");

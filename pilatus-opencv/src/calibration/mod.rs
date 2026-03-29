@@ -3,7 +3,7 @@ use std::{fmt::Debug, num::NonZeroU32, path::Path, sync::Arc};
 use futures::stream::BoxStream;
 use opencv::{
     calib3d::{self},
-    core::{self, Mat, MatTrait, MatTraitConst, Point, Point2f, Point3_, Point3f, Size_, Vector},
+    core::{self, Mat, MatTraitConst, Point, Point2f, Point3_, Point3f, Size_, Vector},
     imgproc,
     prelude::*,
 };
@@ -93,7 +93,7 @@ impl ImageIterable {
         Self { paths }
     }
 
-    fn iter_images(&self) -> impl Iterator<Item = (&'_ str, Result<Mat, crate::Error>)> {
+    pub fn iter_images(&self) -> impl Iterator<Item = (&'_ str, Result<Mat, crate::Error>)> {
         self.paths.iter().map(|p| {
             (
                 p.as_str(),
@@ -109,7 +109,7 @@ pub struct Undistorter {
 }
 
 impl Undistorter {
-    fn undistort(&self, distorted: &Mat) -> Result<Mat, crate::Error> {
+    pub fn undistort(&self, distorted: &Mat) -> Result<Mat, crate::Error> {
         let mut undistorted = Mat::default();
         // Remap the image
         imgproc::remap(
@@ -172,7 +172,7 @@ impl ExtrinsicCalibration {
             .unwrap()
             .zip(offsets.angle.iter())
         {
-            *rot = *rot + offset.get();
+            *rot += offset.get();
         }
         for ((_, trans), offset) in self
             .position
@@ -181,7 +181,7 @@ impl ExtrinsicCalibration {
             .unwrap()
             .zip(offsets.translation.iter())
         {
-            *trans = *trans + offset.get();
+            *trans += offset.get();
         }
     }
 
@@ -198,7 +198,7 @@ impl ExtrinsicCalibration {
             self.camera_matrix(),
             &self.position.rvec,
             &self.position.tvec,
-            &self.dist_coeffs(),
+            self.dist_coeffs(),
         )
     }
 
@@ -317,7 +317,7 @@ mod tests {
     #[ignore = "requires local files"]
     fn handle_charuco() {
         match run_charuco() {
-            Ok(x) => {}
+            Ok(_) => {}
             Err(CalibrationError::NotEnoughPoints { image, points }) => {
                 let mut output = Vector::new();
                 opencv::imgcodecs::imencode(".png", &image, &mut output, &Vector::new()).unwrap();
