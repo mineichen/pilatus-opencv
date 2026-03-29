@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use imbuf::{ImageChannel, PixelType};
 use opencv::{boxed_ref::BoxedRef, core::Mat};
-use pilatus_engineering::image::{DynamicImage, Image};
+use pilatus_engineering::image::{DynamicImage, Image, UnsupportedImageError};
 
 pub struct BorrowImage<'mat>(BoxedRef<'mat, Mat>);
 impl<'a> Deref for BorrowImage<'a> {
@@ -13,12 +13,8 @@ impl<'a> Deref for BorrowImage<'a> {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-#[error("Conversion Error {0:?}")]
-pub struct ConvertImageError(#[from] Option<opencv::Error>);
-
 impl<'mat, 'img: 'mat> TryFrom<&'img DynamicImage> for BorrowImage<'mat> {
-    type Error = ConvertImageError;
+    type Error = opencv::Error;
 
     fn try_from(value: &'img DynamicImage) -> Result<Self, Self::Error> {
         match (
@@ -32,7 +28,11 @@ impl<'mat, 'img: 'mat> TryFrom<&'img DynamicImage> for BorrowImage<'mat> {
             (1, 1, imbuf::DynamicImageChannel::U16(c)) => {
                 c.try_cast::<u16>().expect("Checked in match").try_into()
             }
-            _ => Err(ConvertImageError(None)),
+            _ => Err(opencv::Error::new(
+                opencv::core::Code::StsUnsupportedFormat.into(),
+                "unsupported format",
+            )
+            .into()),
         }
     }
 }
@@ -40,7 +40,7 @@ impl<'mat, 'img: 'mat> TryFrom<&'img DynamicImage> for BorrowImage<'mat> {
 impl<'mat, 'img: 'mat, T: PixelType + 'static + opencv::core::DataType>
     TryFrom<&'img ImageChannel<T>> for BorrowImage<'mat>
 {
-    type Error = ConvertImageError;
+    type Error = opencv::Error;
 
     fn try_from(img: &'img ImageChannel<T>) -> Result<Self, Self::Error> {
         let (width, height) = img.dimensions();
@@ -54,7 +54,7 @@ impl<'mat, 'img: 'mat, T: PixelType + 'static + opencv::core::DataType>
 impl<'mat, 'img: 'mat, T: PixelType + 'static + opencv::core::DataType> TryFrom<&'img Image<T, 1>>
     for BorrowImage<'mat>
 {
-    type Error = ConvertImageError;
+    type Error = opencv::Error;
 
     fn try_from(img: &'img Image<T, 1>) -> Result<Self, Self::Error> {
         let (width, height) = img.dimensions();
