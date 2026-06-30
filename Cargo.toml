@@ -13,12 +13,27 @@ futures = "0.3"
 image = { version = "0.25", default-features = false, features = [
   "png",
 ]}
-imbuf = { git = "https://github.com/mineichen/imbuf.git" }
+imbuf = "0.3"
 minfac = "0.1"
-opencv = { version= "0.98.1", default-features = false, features = ["calib3d", "imgcodecs", "imgproc", "objdetect"] }
+opencv = { version= "0.99", default-features = false, features = ["calib3d", "imgcodecs", "imgproc", "objdetect"] }
 serde = "1"
 serde_json = "1"
 thiserror = "2"
 tokio = "1"
 tracing = "0.1"
 uuid = "1"
+
+#[patch."https://github.com/mineichen/pilatus.git"]
+#pilatus = { path = "../pilatus/pilatus" }
+#pilatus-rt = { path = "../pilatus/pilatus-rt" }
+#pilatus-axum = { path = "../pilatus/pilatus-axum" }
+#pilatus-axum-rt = { path = "../pilatus/pilatus-axum-rt" }
+#pilatus-engineering = { path = "../pilatus/pilatus-engineering" }
+#pilatus-engineering-rt = { path = "../pilatus/pilatus-engineering-rt" }
+#pilatus-emulation-camera = { path = "../pilatus/pilatus-emulation-camera" }
+#pilatus-emulation-camera-rt = { path = "../pilatus/pilatus-emulation-camera-rt" }
+#pilatus-tick = { path = "../pilatus/examples/tick" }
+
+
+#[patch.crates-io]
+#imbuf = { path = "../imbuf" }
