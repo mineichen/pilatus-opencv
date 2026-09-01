@@ -1,6 +1,6 @@
 use std::{
     mem::transmute,
-    num::{NonZeroU32, NonZeroU8},
+    num::{NonZeroU8, NonZeroU32},
     slice,
 };
 
@@ -140,7 +140,9 @@ unsafe fn into_channel<H: MatHeader, P: PixelTypePrimitive>(
             mat as *mut (),
         )
     };
-    unsafe { transmute(channel) }
+    // ImageChannel is #[repr(transparent)] over UnsafeImageChannel, and the only
+    // wrapping constructor (`from_unsafe_internal`) is pub(crate) in imbuf 0.3
+    unsafe { transmute::<UnsafeImageChannel<P>, ImageChannel<DynamicSize<P>>>(channel) }
 }
 
 fn planar_channel<H: MatHeader, P: PixelTypePrimitive>(
@@ -394,6 +396,57 @@ mod tests {
         };
         assert_eq!(channel.buffer_flat(), &[1, 2, 3, 4]);
         assert_eq!(channel.buffer_flat().as_ptr() as usize, data_ptr);
+    }
+
+    #[test]
+    fn make_mut_on_second_plane_copies_only_that_plane() {
+        let flat = Mat::from_slice_2d(&[
+            [1u16, 2],
+            [3, 4],
+            [5, 6],
+            [7, 8],
+            [9, 10],
+            [11, 12],
+        ])
+        .unwrap();
+        let mat: Mat = flat
+            .reshape_nd(1, &[3, 2, 2])
+            .unwrap()
+            .opencv_into_extern_container_nofail();
+        let data_ptr = mat.data() as usize;
+        let mut dynamic = mat.try_into_imbuf().unwrap();
+        let cloned = dynamic.clone();
+        let plane_ptrs: Vec<usize> = (0..dynamic.len_nonzero().get())
+            .map(|index| match &dynamic[index] {
+                DynamicImageChannel::U16(channel) => channel.buffer_flat().as_ptr() as usize,
+                _ => panic!("Expected U16 channel"),
+            })
+            .collect();
+        assert_eq!(plane_ptrs[0], data_ptr);
+
+        let DynamicImageChannel::U16(channel) = &mut dynamic[1] else {
+            panic!("Expected U16 channel");
+        };
+        channel.primitive_make_mut()[0] = 42;
+
+        let DynamicImageChannel::U16(channel) = &dynamic[1] else {
+            panic!("Expected U16 channel");
+        };
+        assert_eq!(channel.buffer_flat(), &[42, 6, 7, 8]);
+        assert_ne!(channel.buffer_flat().as_ptr() as usize, plane_ptrs[1]);
+
+        for index in [0usize, 2] {
+            let DynamicImageChannel::U16(channel) = &dynamic[index] else {
+                panic!("Expected U16 channel");
+            };
+            assert_eq!(channel.buffer_flat().as_ptr() as usize, plane_ptrs[index]);
+        }
+
+        let DynamicImageChannel::U16(channel) = &cloned[1] else {
+            panic!("Expected U16 channel");
+        };
+        assert_eq!(channel.buffer_flat(), &[5, 6, 7, 8]);
+        assert_eq!(channel.buffer_flat().as_ptr() as usize, plane_ptrs[1]);
     }
 
     #[test]
