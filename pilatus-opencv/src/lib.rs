@@ -2,7 +2,7 @@
 pub mod calibration;
 mod image;
 
-pub use image::{BorrowImage, IntoImbuf};
+pub use image::{BorrowImage, TryIntoImbuf};
 
 #[derive(Debug, thiserror::Error)]
 #[error("{source:?}: {trace}")]
