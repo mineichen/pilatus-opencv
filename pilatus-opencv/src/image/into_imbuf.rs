@@ -1,6 +1,7 @@
 use std::{
-    mem::{replace, transmute},
+    mem::transmute,
     num::{NonZeroU32, NonZeroU8},
+    slice,
 };
 
 use imbuf::{
@@ -96,7 +97,12 @@ fn dynamic_image<H: MatHeader, P: PixelTypePrimitive>(mat: H) -> opencv::Result<
             .map(|plane| planar_channel::<H, P>(&mat, plane as i32, width, height))
             .collect::<opencv::Result<Vec<_>>>()?;
         let mut channels = channels.into_iter();
-        let first = channels.next().expect("Planes is nonzero");
+        let Some(first) = channels.next() else {
+            return Err(opencv::Error::new(
+                Code::StsBadArg.into(),
+                "Mat must have at least one plane",
+            ));
+        };
         Ok(DynamicImage::from_channels(
             first.into(),
             channels.map(Into::into),
@@ -151,34 +157,64 @@ fn planar_channel<H: MatHeader, P: PixelTypePrimitive>(
     Ok(unsafe { into_channel(Box::new(H::from_owned(view)), width, height, NonZeroU8::MIN) })
 }
 
-unsafe extern "C" fn clone_mat_channel<H: MatHeader, P>(
+unsafe extern "C" fn clone_mat_channel<H: MatHeader, P: PixelTypePrimitive>(
     image: &UnsafeImageChannel<P>,
 ) -> UnsafeImageChannel<P> {
     let mat = unsafe { &*(image.data as *const H) };
-    let shared = mat.shared().expect("Cannot clone Mat");
-    unsafe {
-        UnsafeImageChannel::new_with_vtable(
-            image.ptr,
-            image.width,
-            image.height,
-            image.pixel_elements,
-            image.vtable,
-            Box::into_raw(Box::new(shared)) as *mut (),
-        )
+    match mat.shared() {
+        Ok(shared) => unsafe {
+            UnsafeImageChannel::new_with_vtable(
+                image.ptr,
+                image.width,
+                image.height,
+                image.pixel_elements,
+                image.vtable,
+                Box::into_raw(Box::new(shared)) as *mut (),
+            )
+        },
+        Err(error) => {
+            tracing::warn!(%error, "Cloning channel as Vec copy, cannot share Mat buffer");
+            copied_channel(image)
+        }
     }
 }
 
-unsafe extern "C" fn make_mat_channel_mut<H: MatHeader, P>(image: &mut UnsafeImageChannel<P>) {
+unsafe extern "C" fn make_mat_channel_mut<H: MatHeader, P: PixelTypePrimitive>(
+    image: &mut UnsafeImageChannel<P>,
+) {
     let mat = unsafe { &*(image.data as *const H) };
-    let owned = mat.unique().expect("Cannot clone Mat");
-    let ptr = owned.data() as *const P;
-    let old = replace(&mut image.data, Box::into_raw(Box::new(owned)) as *mut ());
-    drop(unsafe { Box::from_raw(old as *mut H) });
-    image.ptr = ptr;
+    *image = match mat.unique() {
+        Ok(owned) => {
+            let ptr = owned.data() as *const P;
+            let data = Box::into_raw(Box::new(owned)) as *mut ();
+            unsafe {
+                UnsafeImageChannel::new_with_vtable(
+                    ptr,
+                    image.width,
+                    image.height,
+                    image.pixel_elements,
+                    image.vtable,
+                    data,
+                )
+            }
+        }
+        Err(error) => {
+            tracing::warn!(%error, "Cloning channel as Vec copy, cannot clone Mat buffer");
+            copied_channel(image)
+        }
+    };
 }
 
 unsafe extern "C" fn drop_mat_channel<H, P>(image: &mut UnsafeImageChannel<P>) {
     drop(unsafe { Box::from_raw(image.data as *mut H) });
+}
+
+fn copied_channel<P: PixelTypePrimitive>(image: &UnsafeImageChannel<P>) -> UnsafeImageChannel<P> {
+    let len = image.width.get() as usize
+        * image.height.get() as usize
+        * image.pixel_elements.get() as usize;
+    let data = unsafe { slice::from_raw_parts(image.ptr, len) }.to_vec();
+    UnsafeImageChannel::new_vec(data, image.width, image.height, image.pixel_elements)
 }
 
 fn nonzero_dimension(value: i32) -> opencv::Result<NonZeroU32> {
