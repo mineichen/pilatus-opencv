@@ -4,6 +4,11 @@ use imbuf::{ImageChannel, PixelType};
 use opencv::{boxed_ref::BoxedRef, core::Mat};
 use pilatus_engineering::image::{DynamicImage, Image};
 
+mod from_imbuf;
+mod to_imbuf;
+
+pub use to_imbuf::IntoImbuf;
+
 pub struct BorrowImage<'mat>(BoxedRef<'mat, Mat>);
 impl<'a> Deref for BorrowImage<'a> {
     type Target = BoxedRef<'a, Mat>;

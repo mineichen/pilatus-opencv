@@ -1,7 +1,8 @@
+#[cfg(feature = "calib3d")]
 pub mod calibration;
 mod image;
 
-pub use image::*;
+pub use image::{BorrowImage, IntoImbuf};
 
 #[derive(Debug, thiserror::Error)]
 #[error("{source:?}: {trace}")]

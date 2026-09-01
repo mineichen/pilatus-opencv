@@ -16,8 +16,9 @@ tracing = { workspace = true }
 typed_floats = { version = "1.0.3", features = ["serde"] }
 
 [dev-dependencies]
-opencv = { workspace = true, features = ["clang-runtime"] }
+opencv = { workspace = true, features = ["clang-runtime", "imgcodecs"] }
 image = { workspace = true, default-features = false, features = ["png"] }
 
 [features]
 clang-runtime = ["opencv/clang-runtime"]
+calib3d = ["opencv/calib3d", "opencv/objdetect", "opencv/imgproc"]
