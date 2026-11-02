@@ -10,10 +10,10 @@ anyhow = "1"
 bytes = "1"
 chrono = "0.4"
 futures = "0.3"
-image = { version = "0.25", default-features = false, features = [
-  "png",
-]}
-imbuf-opencv = { git = "https://github.com/mineichen/imbuf.git", branch = "main" }
+#image = { version = "0.25", default-features = false, features = [
+#  "png",
+#]}
+imbuf-opencv = "0.1"
 minfac = "0.1"
 opencv = { version= "0.101", default-features = false }
 serde = "1"
