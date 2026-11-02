@@ -13,9 +13,9 @@ futures = "0.3"
 image = { version = "0.25", default-features = false, features = [
   "png",
 ]}
-imbuf = "0.3"
+imbuf-opencv = { git = "https://github.com/mineichen/imbuf.git", branch = "main" }
 minfac = "0.1"
-opencv = { version= "0.100", default-features = false }
+opencv = { version= "0.101", default-features = false }
 serde = "1"
 serde_json = "1"
 thiserror = "2"
@@ -23,17 +23,24 @@ tokio = "1"
 tracing = "0.1"
 uuid = "1"
 
-#[patch."https://github.com/mineichen/pilatus.git"]
-#pilatus = { path = "../pilatus/pilatus" }
-#pilatus-rt = { path = "../pilatus/pilatus-rt" }
-#pilatus-axum = { path = "../pilatus/pilatus-axum" }
-#pilatus-axum-rt = { path = "../pilatus/pilatus-axum-rt" }
-#pilatus-engineering = { path = "../pilatus/pilatus-engineering" }
-#pilatus-engineering-rt = { path = "../pilatus/pilatus-engineering-rt" }
-#pilatus-emulation-camera = { path = "../pilatus/pilatus-emulation-camera" }
-#pilatus-emulation-camera-rt = { path = "../pilatus/pilatus-emulation-camera-rt" }
-#pilatus-tick = { path = "../pilatus/examples/tick" }
+[patch."https://github.com/mineichen/pilatus.git"]
+pilatus = { path = "../pilatus/pilatus" }
+pilatus-rt = { path = "../pilatus/pilatus-rt" }
+pilatus-axum = { path = "../pilatus/pilatus-axum" }
+pilatus-axum-rt = { path = "../pilatus/pilatus-axum-rt" }
+pilatus-engineering = { path = "../pilatus/pilatus-engineering" }
+pilatus-engineering-rt = { path = "../pilatus/pilatus-engineering-rt" }
+pilatus-emulation-camera = { path = "../pilatus/pilatus-emulation-camera" }
+pilatus-emulation-camera-rt = { path = "../pilatus/pilatus-emulation-camera-rt" }
+pilatus-tick = { path = "../pilatus/examples/tick" }
+
+[patch."https://github.com/mineichen/imbuf.git"]
+imbuf = { path = "../imbuf/imbuf" }
+imbuf-image = { path = "../imbuf/imbuf-image" }
+imbuf-opencv = { path = "../imbuf/imbuf-opencv" }
 
 
-#[patch.crates-io]
-#imbuf = { path = "../imbuf" }
+[patch.crates-io]
+imbuf = { path = "../imbuf/imbuf" }
+imbuf-opencv = { path = "../imbuf/imbuf-opencv" }
+imbuf-image = { path = "../imbuf/imbuf-image" }

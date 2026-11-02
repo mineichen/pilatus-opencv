@@ -1,8 +1,7 @@
 #[cfg(feature = "calib3d")]
 pub mod calibration;
-mod image;
 
-pub use image::{BorrowImage, TryIntoImbuf};
+pub use imbuf_opencv::{ImbufAsOpencv, ImbufAsOpencvMut, OpencvIntoImbuf};
 
 #[derive(Debug, thiserror::Error)]
 #[error("{source:?}: {trace}")]

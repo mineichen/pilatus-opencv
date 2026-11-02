@@ -5,10 +5,9 @@ edition = "2021"
 
 [dependencies]
 futures = "0.3"
+imbuf-opencv = { workspace = true }
 opencv = { workspace = true }
 pilatus = { git = "https://github.com/mineichen/pilatus.git", branch = "main" }
-pilatus-engineering = { git = "https://github.com/mineichen/pilatus.git", branch = "main" }
-imbuf.workspace = true
 rayon = "1.10.0"
 serde = { workspace = true }
 thiserror = "2"
@@ -17,8 +16,6 @@ typed_floats = { version = "1.0.3", features = ["serde"] }
 
 [dev-dependencies]
 opencv = { workspace = true, features = ["clang-runtime", "imgcodecs"] }
-image = { workspace = true, default-features = false, features = ["png"] }
-testresult = "0.4"
 
 [features]
 clang-runtime = ["opencv/clang-runtime"]

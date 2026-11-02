@@ -11,35 +11,59 @@
   outputs = inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" "x86_64-darwin" ];
-      perSystem = { system, pkgs, ... }:
+      perSystem = { system, ... }:
         let
+          pkgs = import inputs.nixpkgs {
+            inherit system;
+            config.allowUnfreePredicate = pkg: builtins.elem (inputs.nixpkgs.lib.getName pkg) [ "claude-code" ];
+          };
           rust = with inputs.fenix.packages.${system}; combine [
             stable.toolchain
             targets.wasm32-unknown-unknown.stable.rust-std
             targets.aarch64-unknown-linux-gnu.stable.rust-std
           ];
+          # `pkgs.clang.cc` is the *unwrapped* clang binary. Unlike the wrapped
+          # `pkgs.clang`, it does not know where the C++ standard library and
+          # libc headers live, which makes `opencv-binding-generator` fail with
+          # `fatal error: 'limits' file not found`. Point clang at the headers
+          # from the stdenv toolchain (libstdc++ and glibc) explicitly.
+          gcc = pkgs.stdenv.cc.cc;
+          gccTarget = pkgs.stdenv.hostPlatform.config;
+          gccVersion = pkgs.lib.getVersion gcc;
+          gccCxxInclude = "${gcc}/include/c++/${gccVersion}";
+          gccIncludeFixed = "${gcc}/lib/gcc/${gccTarget}/${gccVersion}/include-fixed";
+          cxxIncludes = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+            gccCxxInclude
+            "${gccCxxInclude}/${gccTarget}"
+            gccIncludeFixed
+            "${pkgs.stdenv.cc.libc.dev}/include"
+          ];
+          cIncludes = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+            gccIncludeFixed
+            "${pkgs.stdenv.cc.libc.dev}/include"
+          ];
           envVars = {
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-              pkgs.llvmPackages.libclang.lib
+              pkgs.clang.cc.lib
               pkgs.opencv
               pkgs.stdenv.cc.cc.lib
             ];
-            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+            LIBCLANG_PATH = "${pkgs.clang.cc.lib}/lib";
+            CPLUS_INCLUDE_PATH = pkgs.lib.concatStringsSep ":" cxxIncludes;
+            C_INCLUDE_PATH = pkgs.lib.concatStringsSep ":" cIncludes;
             PKG_CONFIG_PATH = pkgs.lib.makeSearchPath "lib/pkgconfig" [
               pkgs.glib.dev
               pkgs.aravis.dev
-            ];
-            CPATH = "${pkgs.glibc.dev}/include";
-            CPLUS_INCLUDE_PATH = pkgs.lib.concatStringsSep ":" [
-              "${pkgs.stdenv.cc.cc}/include/c++/${pkgs.lib.getVersion pkgs.stdenv.cc.cc}"
-              "${pkgs.stdenv.cc.cc}/include/c++/${pkgs.lib.getVersion pkgs.stdenv.cc.cc}/${pkgs.stdenv.hostPlatform.config}"
+              pkgs.opencv
             ];
             SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
           };
           commonBuildInputs = [
             rust
+            # Use the unwrapped clang: the wrapper provides its own bin/cc and
+            # bin/c++, which collide with stdenv.cc inside buildEnv.
+            pkgs.clang.cc
             pkgs.stdenv.cc
-            pkgs.llvmPackages.libclang
             pkgs.cmake
             pkgs.just
             pkgs.opencv
@@ -52,14 +76,35 @@
             echo "===================================="
             rustc --version && cargo --version && trunk --version
           '';
+          # Mirrors rust-analyzer-lsp@claude-plugins-official, which only declares the server.
+          # Built into the image, because /root/.claude isn't persisted between runs.
+          rustAnalyzerLspPlugin = pkgs.writeTextDir "rust-analyzer-lsp/.claude-plugin/plugin.json"
+            (builtins.toJSON {
+              name = "rust-analyzer-lsp";
+              description = "Rust language server for code intelligence and analysis";
+              version = "1.0.0";
+              lspServers.rust-analyzer = {
+                command = "${rust}/bin/rust-analyzer";
+                extensionToLanguage.".rs" = "rust";
+              };
+            });
+          claudeCodeWithLsp = pkgs.writeShellScriptBin "claude" ''
+            exec ${pkgs.claude-code}/bin/claude --plugin-dir ${rustAnalyzerLspPlugin}/rust-analyzer-lsp "$@"
+          '';
           policy = pkgs.writeText "policy.json" ''{"default":[{"type":"insecureAcceptAnything"}]}'';
           containername = "pilatus-opencv-isolated-dev";
-          podmanRun = "${pkgs.podman}/bin/podman run --rm -it "
-            + "--network=slirp4netns "
-            + "--tmpfs /tmp "
-            + "-v pilatus-opencv:/workspace/pilatus-opencv:z "
-            + "-e HOME=/root "
-            + "${containername}:latest /bin/entrypoint.sh";
+          podmanRun = ''
+            workspace="$(realpath "''${1:-.}")"
+            exec ${pkgs.podman}/bin/podman run --rm -it \
+              --network=pasta \
+              --tmpfs /tmp \
+              -v "$workspace:/workspace/pilatus-opencv:z" \
+              -v "../pilatus:/workspace/pilatus:z" \
+              -v "../imbuf:/workspace/imbuf:z" \
+              -w "/workspace/pilatus-opencv" \
+              -e HOME=/root \
+              ${containername}:latest /bin/entrypoint.sh
+          '';
         in
         {
           devShells.default = pkgs.mkShell({
@@ -76,6 +121,7 @@
                 pkgs.ripgrep
                 pkgs.git
                 pkgs.opencode
+                claudeCodeWithLsp
                 pkgs.busybox
                 (pkgs.writeScriptBin "entrypoint.sh" ''
                   #!${pkgs.bashInteractive}/bin/bash
