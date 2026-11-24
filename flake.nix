@@ -7,6 +7,7 @@
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    devtools.url = "github:mineichen/nix-devtools";
   };
   outputs = inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
@@ -76,83 +77,33 @@
             echo "===================================="
             rustc --version && cargo --version && trunk --version
           '';
-          # Mirrors rust-analyzer-lsp@claude-plugins-official, which only declares the server.
-          # Built into the image, because /root/.claude isn't persisted between runs.
-          rustAnalyzerLspPlugin = pkgs.writeTextDir "rust-analyzer-lsp/.claude-plugin/plugin.json"
-            (builtins.toJSON {
-              name = "rust-analyzer-lsp";
-              description = "Rust language server for code intelligence and analysis";
-              version = "1.0.0";
-              lspServers.rust-analyzer = {
-                command = "${rust}/bin/rust-analyzer";
-                extensionToLanguage.".rs" = "rust";
-              };
-            });
-          claudeCodeWithLsp = pkgs.writeShellScriptBin "claude" ''
-            exec ${pkgs.claude-code}/bin/claude --plugin-dir ${rustAnalyzerLspPlugin}/rust-analyzer-lsp "$@"
-          '';
-          policy = pkgs.writeText "policy.json" ''{"default":[{"type":"insecureAcceptAnything"}]}'';
-          containername = "pilatus-opencv-isolated-dev";
-          podmanRun = ''
-            workspace="$(realpath "''${1:-.}")"
-            exec ${pkgs.podman}/bin/podman run --rm -it \
-              --network=pasta \
-              --tmpfs /tmp \
-              -v "$workspace:/workspace/pilatus-opencv:z" \
-              -v "../pilatus:/workspace/pilatus:z" \
-              -v "../imbuf:/workspace/imbuf:z" \
-              -w "/workspace/pilatus-opencv" \
-              -e HOME=/root \
-              ${containername}:latest /bin/entrypoint.sh
-          '';
+          isolated = inputs.devtools.lib.isolated {
+            inherit pkgs inputs;
+            extraMounts = [ "../pilatus" "../imbuf" ];
+            name = "pilatus-opencv-isolated-dev";
+            packages = commonBuildInputs ++ [
+              pkgs.ripgrep
+              pkgs.opencode
+              pkgs.busybox
+            ];
+            claude.pluginDirs = [
+              (inputs.devtools.lib.claudeRustAnalyzer {
+                inherit pkgs;
+                rust-analyzer = rust;
+              })
+            ];
+            env = envVars;
+            shellHook = greet;
+          };
         in
         {
           devShells.default = pkgs.mkShell({
             buildInputs = commonBuildInputs;
             shellHook = greet;
           } // envVars);
-          packages.isolated-build = pkgs.dockerTools.buildImage {
-            name = containername;
-            tag = "latest";
-            copyToRoot = pkgs.buildEnv {
-              name = containername;
-              paths = commonBuildInputs ++ [
-                pkgs.bashInteractive
-                pkgs.ripgrep
-                pkgs.git
-                pkgs.opencode
-                claudeCodeWithLsp
-                pkgs.busybox
-                (pkgs.writeScriptBin "entrypoint.sh" ''
-                  #!${pkgs.bashInteractive}/bin/bash
-                  ${greet}
-                  exec ${pkgs.bashInteractive}/bin/bash
-                '')
-              ];
-              pathsToLink = [ "/bin" "/lib" "/include" "/share" ];
-            };
-            config = {
-              Env = pkgs.lib.mapAttrsToList (k: v: "${k}=${v}") envVars ++ [ "HOME=/root" ];
-              Cmd = [ "/bin/entrypoint.sh" ];
-              WorkingDir = "/workspace/pilatus-opencv";
-            };
-          };
-          apps.isolated-build = {
+          apps.isolated = {
             type = "app";
-            program = toString (pkgs.writeShellScript containername ''
-              ${pkgs.podman}/bin/podman rmi ${containername} || true
-              ${pkgs.podman}/bin/podman load \
-                --signature-policy ${policy} \
-                --input ${inputs.self.packages.${system}.isolated-build}
-              ${podmanRun}
-            '');
-          };
-          apps.isolated-nobuild = {
-            type = "app";
-            program = toString (pkgs.writeShellScript "run-isolated" ''
-              set -euo pipefail
-              ${podmanRun}
-            '');
+            program = pkgs.lib.getExe isolated;
           };
         };
     };
